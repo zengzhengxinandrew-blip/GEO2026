@@ -24,7 +24,10 @@ description: >-
 核心判断只有一句：**GEO 的终点不是排名，是 AI 答案里那句话是不是按你的口径说的。**
 所以最小单位不是页面，是**可被抽取的事实块**。
 
-项目目录：`/Users/brucejan/geo`，每个客户/产品一个 `work/<slug>/`。
+项目目录：GeoLook **仓库根目录**（即本 SKILL.md 所在目录，下记作 `$GEO`）。
+脚本按自身位置推导根目录，不依赖任何写死的绝对路径——部署到服务器上可能是 `/opt/geolook`
+之类的位置，**别照抄任何示例路径**，一律先 `cd` 到仓库根目录再执行命令。
+每个客户/产品一个 `work/<slug>/`。
 
 ---
 
@@ -302,7 +305,7 @@ python3 scripts/geo.py status --slug <项目>     # 进度看板
 
 用 `schedule` skill 建定时任务：
 
-> 每周一早上跑 `python3 /Users/brucejan/geo/scripts/geo.py serve --slug <项目>`，
+> 每周一早上跑 `cd $GEO && python3 scripts/geo.py serve --slug <项目>`，
 > 然后读 `work/<项目>/reports/latest.md`，如果出现新的 P0、提及率下降超过 10 个百分点，
 > 或有工单从 done 回归成 todo，就告诉我。
 
@@ -326,7 +329,7 @@ python3 scripts/geo.py status --slug <项目>     # 进度看板
 ## 目录
 
 ```text
-/Users/brucejan/geo/
+$GEO/                          仓库根目录 · 路径随部署位置变化，脚本自动推导
 ├── SKILL.md
 ├── references/
 │   ├── method.md              评分口径与全部判据出处

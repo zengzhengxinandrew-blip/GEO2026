@@ -261,18 +261,27 @@ def auth_ok(token: str | None, cookie_header: str | None,
     return False
 
 
-_LOGIN_HTML = """<!doctype html><meta charset="utf-8"><title>GeoLook</title>
+LOGIN_PATH = "/__login"
+
+# 令牌走 POST 表单的请求体提交，不拼进 URL——URL 会被 Nginx 等反代写进访问日志。
+_LOGIN_HTML_HEAD = """<!doctype html><meta charset="utf-8"><title>GeoLook</title>
 <body style="background:#131622;color:#e8eaf2;font-family:system-ui;display:flex;
 align-items:center;justify-content:center;height:100vh;margin:0">
-<form style="text-align:center" onsubmit="location='/?token='+encodeURIComponent(
-document.getElementById('t').value);return false">
+<form method="post" action="/__login" style="text-align:center">
 <div style="font-size:20px;margin-bottom:14px">Geo<span style="color:#9184d9">Look</span></div>
-<input id="t" type="password" placeholder="访问令牌 / Access token" autofocus
+<input name="token" type="password" placeholder="访问令牌 / Access token" autofocus
 style="background:#1b1e2e;border:1px solid #3a3f55;border-radius:8px;color:#e8eaf2;
 padding:10px 14px;font-size:14px;width:240px">
-<button style="background:#9184d9;border:0;border-radius:8px;color:#101223;
+<button type="submit" style="background:#9184d9;border:0;border-radius:8px;color:#101223;
 padding:10px 18px;font-size:14px;margin-left:8px;cursor:pointer">进入</button>
-</form></body>"""
+</form>"""
+_LOGIN_HTML_WRONG = ('<div style="text-align:center;color:#e0685f;font-size:13px;'
+                     'margin-top:14px">令牌不对，再试一次</div>')
+_LOGIN_HTML_TAIL = "</body>"
+
+
+def _login_html(wrong: bool = False) -> str:
+    return _LOGIN_HTML_HEAD + (_LOGIN_HTML_WRONG if wrong else "") + _LOGIN_HTML_TAIL
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -283,28 +292,54 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _auth(self) -> bool:
-        """True=放行；False=已自行响应（401 或换 cookie 的 302）。"""
+        """True=放行；False=已自行响应（401、302 或登录结果）。
+
+        令牌只走两条不进访问日志的路：POST /__login 的请求体，或 X-Geolook-Token 头。
+        ?token= 只为兼容旧链接保留，命中后立刻跳回干净地址。
+        """
         if not Handler.TOKEN:
             return True
         u = urlparse(self.path)
+        if self.command == "POST" and u.path == LOGIN_PATH:
+            return self._do_login()
         qt = (parse_qs(u.query).get("token") or [None])[0]
         if qt and hmac.compare_digest(qt, Handler.TOKEN):
-            # 令牌换 cookie 后跳回干净地址，别让令牌留在地址栏和访问日志里
-            self.send_response(302)
-            self.send_header("Location", u.path or "/")
-            self.send_header("Set-Cookie", f"{AUTH_COOKIE}={_token_digest(Handler.TOKEN)}; "
-                                           "HttpOnly; SameSite=Strict; Path=/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return False
+            # 令牌换 cookie 后跳回干净地址，别让令牌留在地址栏和访问日志里。
+            # 只对 GET 跳：POST 被 302 会退化成 GET，脚本调用会莫名失败。
+            if self.command == "GET":
+                self._redirect_clean(u.path or "/")
+                return False
+            return True
         if auth_ok(Handler.TOKEN, self.headers.get("Cookie"),
                    header_token=self.headers.get("X-Geolook-Token")):
             return True
         if self.command == "GET":
-            self._send(401, _LOGIN_HTML.encode("utf-8"), "text/html; charset=utf-8")
+            self._send(401, _login_html().encode("utf-8"), "text/html; charset=utf-8")
         else:
             self._json({"error": "未授权：需要 X-Geolook-Token 头或先在浏览器登录"}, 401)
         return False
+
+    def _do_login(self) -> bool:
+        """POST /__login：验令牌、种 cookie、跳首页。令牌始终待在请求体里。"""
+        n = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(n).decode("utf-8", "replace") if n else ""
+        cand = (parse_qs(raw).get("token") or [""])[0]
+        if not (cand and hmac.compare_digest(cand, Handler.TOKEN)):
+            self._send(401, _login_html(wrong=True).encode("utf-8"),
+                       "text/html; charset=utf-8")
+            return False
+        self._redirect_clean("/")
+        return False
+
+    def _redirect_clean(self, location: str) -> None:
+        """种下 HttpOnly cookie 并跳到不含令牌的地址；反代为 HTTPS 时补 Secure。"""
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Set-Cookie", f"{AUTH_COOKIE}={_token_digest(Handler.TOKEN)}; "
+                                       f"HttpOnly; SameSite=Strict; Path=/{secure}")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send(self, code, body: bytes, ctype="application/json; charset=utf-8"):
         self.send_response(code)
@@ -779,6 +814,9 @@ def run(port: int = 8765, open_browser: bool = True,
     url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}/"
     G.info(f"看板已启动：{url}（Ctrl+C 退出）"
            + ("，访问需令牌（GEOLOOK_TOKEN）" if token else ""))
+    if host not in ("127.0.0.1", "localhost"):
+        G.info("经网络暴露：请用 Nginx 等反代做 HTTPS 终止并转发 X-Forwarded-Proto；"
+               "令牌走登录表单或 X-Geolook-Token 头，不要放在 URL 里。")
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
