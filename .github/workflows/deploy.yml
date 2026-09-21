@@ -1,0 +1,72 @@
+name: Deploy GeoLook
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: geolook-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Ubuntu server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          : "${SSH_HOST:?Missing SSH_HOST secret}"
+          : "${SSH_USER:?Missing SSH_USER secret}"
+          : "${SSH_KEY:?Missing SSH_KEY secret}"
+          : "${APP_DIR:?Missing APP_DIR secret}"
+
+          SSH_PORT="${SSH_PORT:-22}"
+          SERVICE_NAME="${SERVICE_NAME:-geolook}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/geolook_deploy_key
+          chmod 600 ~/.ssh/geolook_deploy_key
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/geolook_deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' BRANCH='$BRANCH' SERVICE_NAME='$SERVICE_NAME' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [ ! -d "$APP_DIR/.git" ]; then
+            mkdir -p "$(dirname "$APP_DIR")"
+            git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+          fi
+
+          cd "$APP_DIR"
+          git fetch origin "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+
+          if [ ! -d .venv ]; then
+            python3 -m venv .venv
+          fi
+
+          . .venv/bin/activate
+          pip install -U pip
+          pip install requests beautifulsoup4 lxml
+
+          if [ -f .env.example ] && [ ! -f .env ]; then
+            cp .env.example .env
+          fi
+
+          sudo systemctl restart "$SERVICE_NAME"
+          sudo systemctl status "$SERVICE_NAME" --no-pager
+          REMOTE
