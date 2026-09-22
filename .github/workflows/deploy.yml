@@ -22,9 +22,9 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_KEY: ${{ secrets.SSH_KEY }}
           APP_DIR: ${{ secrets.APP_DIR }}
-          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
           REPO_URL: https://github.com/${{ github.repository }}.git
           BRANCH: ${{ github.ref_name }}
+          COMPOSE_PROFILES: ${{ secrets.COMPOSE_PROFILES }}
         run: |
           set -euo pipefail
 
@@ -34,7 +34,6 @@ jobs:
           : "${APP_DIR:?Missing APP_DIR secret}"
 
           SSH_PORT="${SSH_PORT:-22}"
-          SERVICE_NAME="${SERVICE_NAME:-geolook}"
 
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -43,7 +42,7 @@ jobs:
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
 
           ssh -i ~/.ssh/geolook_deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' BRANCH='$BRANCH' SERVICE_NAME='$SERVICE_NAME' bash -s" <<'REMOTE'
+            "APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' BRANCH='$BRANCH' COMPOSE_PROFILES='${COMPOSE_PROFILES:-}' bash -s" <<'REMOTE'
           set -euo pipefail
 
           if [ ! -d "$APP_DIR/.git" ]; then
@@ -55,18 +54,17 @@ jobs:
           git fetch origin "$BRANCH"
           git reset --hard "origin/$BRANCH"
 
-          if [ ! -d .venv ]; then
-            python3 -m venv .venv
-          fi
-
-          . .venv/bin/activate
-          pip install -U pip
-          pip install requests beautifulsoup4 lxml
-
-          if [ -f .env.example ] && [ ! -f .env ]; then
+          if [ ! -f .env ]; then
             cp .env.example .env
+            echo "Created .env from .env.example. Set GEOLOOK_TOKEN before exposing the service."
           fi
 
-          sudo systemctl restart "$SERVICE_NAME"
-          sudo systemctl status "$SERVICE_NAME" --no-pager
+          if [ -n "${COMPOSE_PROFILES:-}" ]; then
+            docker compose --profile "$COMPOSE_PROFILES" up -d --build
+          else
+            docker compose up -d --build geolook
+          fi
+
+          docker compose ps
+          docker compose logs --tail=80 geolook
           REMOTE
