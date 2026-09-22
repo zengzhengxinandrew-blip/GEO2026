@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -457,7 +458,7 @@ def cmd_serve(a):
 def cmd_ui(a):
     import dashboard
 
-    dashboard.run(port=a.port, open_browser=not a.no_open)
+    dashboard.run(port=a.port, open_browser=not a.no_open, host=a.host, token=a.token)
 
 
 def cmd_list(a):
@@ -621,7 +622,9 @@ def main():
     s.set_defaults(func=cmd_serve)
 
     s = sub.add_parser("ui", help="启动可观测看板（趋势、工单、信源、验收历史）")
-    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--host", default=None, help="监听地址；也可用 GEOLOOK_HOST")
+    s.add_argument("--port", type=int, default=int(os.environ.get("GEOLOOK_PORT", "8765")))
+    s.add_argument("--token", default=None, help="访问令牌；也可用 GEOLOOK_TOKEN")
     s.add_argument("--no-open", action="store_true", dest="no_open")
     s.set_defaults(func=cmd_ui)
 

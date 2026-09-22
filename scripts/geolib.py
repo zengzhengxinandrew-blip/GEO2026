@@ -20,7 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 
 ROOT = Path(__file__).resolve().parent.parent
-WORK = ROOT / "work"
+ENV_PATH = Path(os.environ.get("GEOLOOK_ENV_FILE", ROOT / ".env")).expanduser()
 
 
 def load_env(path: Path | None = None):
@@ -36,7 +36,11 @@ def load_env(path: Path | None = None):
         os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
 
-load_env()
+load_env(ENV_PATH)
+
+# Hosted deployments can keep mutable state outside the application directory
+# so Docker images stay immutable and backups can target one mounted folder.
+WORK = Path(os.environ.get("GEOLOOK_WORK_DIR", ROOT / "work")).expanduser().resolve()
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "

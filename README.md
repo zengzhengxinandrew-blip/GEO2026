@@ -125,6 +125,21 @@ python3 scripts/geo.py ui
 
 For public deployments put an HTTPS reverse proxy (nginx/caddy) in front — a token over plain HTTP can be intercepted. `.env` and `work/` contain secrets and project data — mind file permissions.
 
+### Hosted single-tenant MVP (Docker)
+
+For a server-hosted single-tenant deployment, the repo now ships a `Dockerfile`, `docker-compose.yml`, and a Caddy HTTPS template:
+
+```bash
+cp .env.example .env
+# Set GEOLOOK_TOKEN; for HTTPS also set GEOLOOK_DOMAIN and GEOLOOK_COOKIE_SECURE=1
+docker compose up -d geolook
+
+# Enable public HTTPS access
+docker compose --profile https up -d
+```
+
+Mutable state is stored under `data/` for backup and upgrades. See [docs/hosted-mvp.zh-CN.md](docs/hosted-mvp.zh-CN.md) for the full deployment guide.
+
 ### Upgrading
 
 ```bash

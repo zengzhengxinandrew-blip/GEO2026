@@ -1,4 +1,7 @@
+import json
+import threading
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +41,36 @@ class TestPublicBindGuard(unittest.TestCase):
         with mock.patch.dict(D.os.environ, {}, clear=True), \
              self.assertRaises(SystemExit):
             D.run(port=0, open_browser=False, host="0.0.0.0", token=None)
+
+
+class TestHostedHealthCheck(unittest.TestCase):
+    def test_healthz_bypasses_auth_and_has_security_headers(self):
+        D.Handler.TOKEN = "secret"
+        D.Handler.COOKIE_SECURE = False
+        srv = D.ThreadingHTTPServer(("127.0.0.1", 0), D.Handler)
+        thread = threading.Thread(target=srv.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{srv.server_port}/healthz"
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                self.assertEqual(data, {"ok": True, "service": "geolook"})
+                self.assertEqual(resp.headers["X-Content-Type-Options"], "nosniff")
+                self.assertEqual(resp.headers["X-Frame-Options"], "DENY")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            D.Handler.TOKEN = None
+
+
+class TestEnvBool(unittest.TestCase):
+    def test_env_bool(self):
+        with mock.patch.dict(D.os.environ, {"FLAG": "yes"}, clear=True):
+            self.assertTrue(D._env_bool("FLAG"))
+        with mock.patch.dict(D.os.environ, {"FLAG": "0"}, clear=True):
+            self.assertFalse(D._env_bool("FLAG", True))
+        with mock.patch.dict(D.os.environ, {}, clear=True):
+            self.assertTrue(D._env_bool("FLAG", True))
 
 
 if __name__ == "__main__":

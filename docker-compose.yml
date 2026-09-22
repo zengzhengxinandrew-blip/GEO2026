@@ -1,0 +1,39 @@
+services:
+  geolook:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      GEOLOOK_HOST: 0.0.0.0
+      GEOLOOK_PORT: 8765
+      GEOLOOK_TOKEN: ${GEOLOOK_TOKEN:?set GEOLOOK_TOKEN in .env first}
+      GEOLOOK_ENV_FILE: /data/.env
+      GEOLOOK_WORK_DIR: /data/work
+      GEOLOOK_JOBS_DIR: /data/jobs
+      GEOLOOK_COOKIE_SECURE: ${GEOLOOK_COOKIE_SECURE:-0}
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8765:8765"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles:
+      - https
+    depends_on:
+      - geolook
+    environment:
+      GEOLOOK_DOMAIN: ${GEOLOOK_DOMAIN:?set GEOLOOK_DOMAIN in .env first}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

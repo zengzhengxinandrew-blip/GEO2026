@@ -21,7 +21,7 @@ from pathlib import Path
 
 import geolib as G
 
-JOBS_DIR = G.ROOT / ".jobs"
+JOBS_DIR = Path(os.environ.get("GEOLOOK_JOBS_DIR", G.ROOT / ".jobs")).expanduser().resolve()
 GEO_PY = G.ROOT / "scripts" / "geo.py"
 
 # 界面上可触发的动作。参数经过白名单，不接受任意命令。

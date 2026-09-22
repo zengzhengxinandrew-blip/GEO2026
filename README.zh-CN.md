@@ -150,6 +150,21 @@ python3 scripts/geo.py ui
 
 公网部署建议再套一层 HTTPS 反向代理（nginx/caddy），令牌走明文 HTTP 会被中间人看到。`.env` 与 `work/` 含密钥和项目数据，注意文件权限。
 
+### Hosted 单租户 MVP（Docker）
+
+如果你想把 GeoLook 部署成一个可通过域名访问的单租户服务，可直接使用仓库内的 `Dockerfile`、`docker-compose.yml` 与 Caddy 模板：
+
+```bash
+cp .env.example .env
+# 填写 GEOLOOK_TOKEN；域名部署再填 GEOLOOK_DOMAIN 和 GEOLOOK_COOKIE_SECURE=1
+docker compose up -d geolook
+
+# 启用 HTTPS 域名访问
+docker compose --profile https up -d
+```
+
+可变数据会落在 `data/`，方便备份和升级。完整步骤见 [docs/hosted-mvp.zh-CN.md](docs/hosted-mvp.zh-CN.md)。
+
 ### 升级
 
 ```bash
