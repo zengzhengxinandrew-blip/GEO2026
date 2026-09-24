@@ -5,16 +5,23 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GeoLook · 生成式引擎优化平台</title>
 <style>
-/* Nocturne 设计系统令牌（取自设计稿 styles.css，暗色单主题） */
+/* 方案 A · 暖阳橘：克制品牌橙 + 暖白工作区 + 中性灰信息层级 */
 :root{
-  --bg:#161826; --surface:#232532; --side:#1b1d2b; --deep:#1b1d2b;
-  --text:#e9e9ed; --t400:#b2b6ca; --t500:#9397ab; --t600:#75798c; --t700:#595d6c;
-  --accent:#9184d9; --a100:#f5f4ff; --a300:#d2cefd; --a400:#b5abfc;
-  --a700:#5d5294; --a800:#423a6a; --a900:#2b2741;
-  --n800:#3f424d; --n900:#292b31;
-  --divider:rgba(233,233,237,0.16); --line:rgba(233,233,237,0.08);
+  --brand-50:#FFF4EC; --brand-100:#FFE8D4; --brand-200:#FFD0AA; --brand-300:#FFB574;
+  --brand-400:#FF9F58; --brand-500:#FF8A3D; --brand-600:#EF6C1A; --brand-700:#C9540F;
+  --brand-800:#9E420C; --brand-900:#6B2C08;
+  --brand-primary:var(--brand-500); --brand-primary-hover:var(--brand-600);
+  --brand-primary-active:var(--brand-700); --brand-on-primary:var(--brand-900);
+  --ink-900:#1F2937; --ink-700:#374151; --ink-500:#6B7280; --ink-300:#D1D5DB; --ink-100:#F3F4F6;
+  --bg:#FFF9F4; --surface:#FFFFFF; --side:#FFFFFF; --deep:var(--brand-50);
+  --text:var(--ink-900); --t400:var(--ink-700); --t500:var(--ink-500); --t600:var(--ink-500); --t700:var(--ink-300);
+  --accent:var(--brand-primary); --a100:var(--brand-50); --a300:var(--brand-700); --a400:var(--brand-600);
+  --a700:var(--brand-700); --a800:var(--brand-800); --a900:var(--brand-100);
+  --n800:var(--ink-100); --n900:#FAFAFA;
+  --border:#E7E5E4; --success:#2F855A; --warning:#B45309; --error:#DC2626; --info:#2563EB;
+  --divider:var(--border); --line:rgba(31,41,55,0.08);
   --r-md:8px; --r-lg:14px;
-  --sh-sm:0 0 0 1px #3f424d; --sh-md:0 0 0 1px #595d6c,0 6px 18px rgba(0,0,0,.55);
+  --sh-sm:0 0 0 1px rgba(31,41,55,.10); --sh-md:0 0 0 1px rgba(31,41,55,.12),0 8px 24px rgba(31,41,55,.12);
   --font:"Inter",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
 }
 *,*::before,*::after{box-sizing:border-box}
@@ -23,33 +30,34 @@ h1,h2,h3,h4{font-weight:500;line-height:1.12;letter-spacing:-.015em;margin:0 0 6
 h2{font-size:32px} h3{font-size:25px} h4{font-size:20px}
 p{margin:0 0 8px}
 a{color:var(--accent);text-underline-offset:3px}
-::selection{background:rgba(145,132,217,.3)}
+::selection{background:rgba(255,138,61,.3)}
 :focus{outline:none} :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 ::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-thumb{background:#3f424d;border-radius:8px}
+::-webkit-scrollbar-thumb{background:var(--ink-300);border-radius:8px}
 ::-webkit-scrollbar-track{background:transparent}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;
   font:500 14px/1.2 var(--font);color:var(--text);background:transparent;
   border:1px solid transparent;padding:7px 12px;border-radius:var(--r-md);text-decoration:none}
 .btn:disabled{opacity:.45;cursor:not-allowed}
-.btn-primary{color:var(--accent);border-color:var(--accent)}
-.btn-primary:hover{background:rgba(145,132,217,.12)}
+.btn-primary{color:var(--brand-primary-active);border-color:var(--accent)}
+.btn-primary:hover{background:rgba(255,138,61,.12)}
 .btn-secondary{border-color:var(--divider)}
-.btn-secondary:hover{background:rgba(233,233,237,.07)}
+.btn-secondary:hover{background:rgba(24,33,43,.06)}
 .btn-ghost{color:var(--accent);padding-inline:4px}
-.btn-ghost:hover{background:rgba(145,132,217,.10)}
+.btn-ghost:hover{background:rgba(255,138,61,.10)}
 .btn-block{width:100%}
 .card{display:flex;flex-direction:column;gap:6px;padding:16px;border-radius:var(--r-md);background:var(--surface)}
 .elev{box-shadow:var(--sh-sm)}
 .kicker{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
 .tag{display:inline-flex;align-items:center;font-size:11px;letter-spacing:.02em;padding:3px 10px;border-radius:6px;white-space:nowrap}
 .tag-accent{background:var(--a800);color:var(--a100)}
-.tag-neutral{background:var(--n800);color:#f3f5fe}
+.tag-neutral{background:var(--n800);color:var(--text)}
 .tag-dim{background:var(--n900);color:var(--t500)}
 .tag-outline{border:1px solid var(--accent);color:var(--accent);background:transparent}
-.pill-good{background:var(--a900);color:var(--a300)}
-.pill-warn{background:var(--n800);color:#e4e7f5}
+.pill-good{background:rgba(47,133,90,.12);color:var(--success)}
+.pill-warn{background:rgba(180,83,9,.12);color:var(--warning)}
+.pill-error{background:rgba(220,38,38,.10);color:var(--error)}
 .tbl{overflow-x:auto}
 .tbl .table{min-width:820px}
 .table{width:100%;border-collapse:collapse;font-size:14px}
@@ -59,12 +67,12 @@ a{color:var(--accent);text-underline-offset:3px}
 .table thead tr{background:linear-gradient(to right,transparent,var(--divider) 48px,var(--divider) calc(100% - 48px),transparent) no-repeat bottom/100% 1px}
 .table tbody tr{background:linear-gradient(to right,transparent,var(--line) 48px,var(--line) calc(100% - 48px),transparent) no-repeat bottom/100% 1px}
 .table tbody tr:hover{background:
-  linear-gradient(rgba(233,233,237,.04),rgba(233,233,237,.04)) no-repeat 0 0/100% 100%,
+  linear-gradient(rgba(255,138,61,.07),rgba(255,138,61,.07)) no-repeat 0 0/100% 100%,
   linear-gradient(to right,transparent,var(--line) 48px,var(--line) calc(100% - 48px),transparent) no-repeat bottom/100% 1px}
-.field>label{display:block;font-size:12px;margin-bottom:5px;color:rgba(233,233,237,.7)}
+.field>label{display:block;font-size:12px;margin-bottom:5px;color:rgba(24,33,43,.70)}
 .input{width:100%;min-height:36px;padding:6px 10px;font:inherit;font-size:14px;color:var(--text);
   caret-color:var(--accent);background:var(--surface);border:1px solid var(--divider);border-radius:var(--r-md)}
-.input:hover{border-color:rgba(233,233,237,.45)}
+.input:hover{border-color:rgba(24,33,43,.35)}
 .input:focus-visible{border-color:var(--accent);outline-offset:0}
 textarea.input{min-height:90px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.7}
 .seg{display:inline-flex;overflow:hidden;border:1px solid var(--divider);border-radius:var(--r-md)}
@@ -72,13 +80,13 @@ textarea.input{min-height:90px;resize:vertical;font-family:ui-monospace,SFMono-R
 .seg-opt+.seg-opt{border-left:1px solid var(--divider)}
 .seg-opt input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
 .seg-opt:has(input:checked){color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
-.seg-opt:not(:has(input:checked)):hover{background:rgba(233,233,237,.07)}
+.seg-opt:not(:has(input:checked)):hover{background:rgba(24,33,43,.06)}
 .tabs{display:inline-flex;background:var(--surface);border-radius:11px;padding:4px;gap:2px;box-shadow:var(--sh-sm)}
 .tab{border:0;background:none;color:var(--t500);font:500 13.5px/1 var(--font);padding:9px 18px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:color .12s,background .12s}
 .tab:hover{color:var(--t400)}
-.tab.on{background:var(--accent);color:#15172a}
-.tab .cnt{font-size:11px;padding:1px 7px;border-radius:99px;background:rgba(233,233,237,.10);color:var(--t500)}
-.tab.on .cnt{background:rgba(21,23,42,.22);color:#15172a}
+.tab.on{background:var(--accent);color:var(--brand-on-primary)}
+.tab .cnt{font-size:11px;padding:1px 7px;border-radius:99px;background:rgba(24,33,43,.08);color:var(--t500)}
+.tab.on .cnt{background:rgba(107,44,8,.18);color:var(--brand-on-primary)}
 .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
 .muted{color:var(--t600)} .soft{color:var(--t400)}
 pre.log{background:var(--deep);border-radius:var(--r-md);box-shadow:var(--sh-sm);padding:13px 15px;
@@ -91,12 +99,12 @@ pre.log{background:var(--deep);border-radius:var(--r-md);box-shadow:var(--sh-sm)
   border-left:3px solid var(--accent);border-radius:var(--r-md);padding:11px 16px;z-index:90;
   font-size:13px;max-width:400px;animation:sl .2s ease-out}
 @keyframes sl{from{transform:translateY(8px);opacity:0}}
-.toast.err{border-left-color:#d55}
-.modal{position:fixed;inset:0;background:rgba(41,43,49,.6);display:grid;place-items:center;z-index:60;padding:24px}
+.toast.err{border-left-color:var(--error)}
+.modal{position:fixed;inset:0;background:rgba(24,33,43,.45);display:grid;place-items:center;z-index:60;padding:24px}
 .modal .box{background:var(--surface);border-radius:var(--r-lg);padding:22px 24px;max-width:620px;width:100%;
   box-shadow:var(--sh-md);max-height:88vh;overflow:auto}
 .bar{height:7px;border-radius:4px;background:var(--deep);overflow:hidden}
-.bar>span{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#5d5294,#9184d9)}
+.bar>span{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--brand-700),var(--brand-primary))}
 .uln{box-shadow:inset 0 -2px 0 var(--accent);padding-bottom:1px}
 .dot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block}
 .spec{display:grid;grid-template-columns:repeat(4,auto);gap:26px;justify-content:start}
@@ -104,16 +112,16 @@ pre.log{background:var(--deep);border-radius:var(--r-md);box-shadow:var(--sh-sm)
 .spec .v{font-size:12.5px;margin-top:2px}
 
 #side{width:236px;flex:none;display:flex;flex-direction:column;gap:18px;padding:18px 12px 20px;
-  background:var(--side);box-shadow:inset -1px 0 0 rgba(233,233,237,.10);
+  background:var(--side);box-shadow:inset -1px 0 0 var(--border);
   position:sticky;top:0;height:100vh;overflow:auto}
-.navgrp{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t600);padding:0 8px 4px}
+.navgrp{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t500);padding:0 8px 4px}
 .navit{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;cursor:pointer;
   font:inherit;font-size:13px;padding:7px 8px;border-radius:6px;background:transparent;color:var(--t400)}
-.navit:hover{background:rgba(233,233,237,.05)}
-.navit.on{background:var(--a900);color:var(--text)}
+.navit:hover{background:var(--brand-50)}
+.navit.on{background:var(--brand-50);color:var(--brand-800)}
 .navit .mark{width:2px;height:14px;border-radius:2px;flex:none;background:transparent}
 .navit.on .mark{background:var(--accent)}
-.navit .bdg{margin-left:auto;font-size:10.5px;color:var(--t600)}
+.navit .bdg{margin-left:auto;font-size:10.5px;color:var(--t500)}
 
 /* KPI 栅格与工作台三栏用 class 而非内联样式，方便窄屏媒体查询覆盖 */
 .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:20px}
@@ -158,7 +166,7 @@ function distRows(list,me){ // 品牌提及分布条：me=自己品牌名高亮
   return (list||[]).map(x=>{const mine=x.name===me;
     return `<div class="row" style="gap:8px;padding:4px 0">
       <span style="width:132px;flex:none;font-size:12.5px;${mine?'color:var(--a300)':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.name)}">${esc(x.name)}${mine?' ⭑':''}</span>
-      <div class="bar" style="flex:1;height:6px"><div style="height:100%;width:${Math.max(3,Math.round(x.rate/max*100))}%;background:${mine?'var(--a400)':'#595d6c'};border-radius:4px"></div></div>
+      <div class="bar" style="flex:1;height:6px"><div style="height:100%;width:${Math.max(3,Math.round(x.rate/max*100))}%;background:${mine?'var(--a400)':'var(--t700)'};border-radius:4px"></div></div>
       <span style="width:86px;flex:none;text-align:right;font-size:11.5px;color:var(--t400)">${pct(x.rate)} · ${x.hits} 次</span></div>`}).join('')
     ||'<div class="muted" style="font-size:12px">本期没有实体被提及</div>';
 }
@@ -1141,10 +1149,10 @@ function vOverview(){
     const pts=tr.map((p,i)=>[xs(i),ys(p.health)]);
     const path=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
     return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:170px" preserveAspectRatio="none">
-      ${[0,.33,.66,1].map(f=>`<line x1="0" y1="${(P.t+(H-P.t-P.b)*f).toFixed(0)}" x2="${W}" y2="${(P.t+(H-P.t-P.b)*f).toFixed(0)}" stroke="#3f424d" stroke-width="1" ${f>0&&f<1?'stroke-dasharray="3 4"':''}></line>`).join('')}
-      <path d="${path} L${pts[pts.length-1][0]},${H} L${pts[0][0]},${H} Z" fill="#9184d9" opacity="0.10"></path>
-      <path d="${path}" fill="none" stroke="#9184d9" stroke-width="2.5" stroke-linejoin="round"></path>
-      <circle cx="${pts[pts.length-1][0]}" cy="${pts[pts.length-1][1]}" r="4" fill="#9184d9"></circle>
+      ${[0,.33,.66,1].map(f=>`<line x1="0" y1="${(P.t+(H-P.t-P.b)*f).toFixed(0)}" x2="${W}" y2="${(P.t+(H-P.t-P.b)*f).toFixed(0)}" stroke="#b8c2c9" stroke-width="1" ${f>0&&f<1?'stroke-dasharray="3 4"':''}></line>`).join('')}
+      <path d="${path} L${pts[pts.length-1][0]},${H} L${pts[0][0]},${H} Z" fill="#FF8A3D" opacity="0.10"></path>
+      <path d="${path}" fill="none" stroke="#FF8A3D" stroke-width="2.5" stroke-linejoin="round"></path>
+      <circle cx="${pts[pts.length-1][0]}" cy="${pts[pts.length-1][1]}" r="4" fill="#FF8A3D"></circle>
     </svg>
     <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--t600)">
       ${tr.map(p=>`<span>${p.date.slice(5)}</span>`).join('')}</div>`;
@@ -1210,7 +1218,7 @@ function vOverview(){
             <span style="width:44px;text-align:right">${pct(me)}</span></div>
           <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--t600);margin-top:4px">
             <span style="width:48px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(who)}</span>
-            <span class="bar" style="flex:1"><span style="width:${them!=null?((them/mx)*100).toFixed(0):0}%;background:#595d6c"></span></span>
+            <span class="bar" style="flex:1"><span style="width:${them!=null?((them/mx)*100).toFixed(0):0}%;background:var(--t700)"></span></span>
             <span style="width:44px;text-align:right">${them!=null?pct(them):'—'}</span></div>
         </div>`}).join('')}
         <button class="btn btn-ghost" style="align-self:flex-start;margin-top:6px" onclick="go('gaps')">看差距诊断 →</button>
@@ -1263,7 +1271,7 @@ async function vEngines(){
       <div class="card elev" style="padding:18px">
         <div style="font-size:15px;font-weight:500">样本回放 · ${esc(e.label)}</div>
         <div style="font-size:11.5px;color:var(--t600);margin-bottom:8px">${ex?`问题：「${esc(ex.question)}」 · ${esc(ex.date)} · 真实采样原文`:'本期无样本'}</div>
-        ${ex?`<div style="padding:13px;border-radius:var(--r-md);background:var(--deep);font-size:13px;line-height:1.65;color:#cfd3e5">${excerpt}…</div>
+        ${ex?`<div style="padding:13px;border-radius:var(--r-md);background:var(--deep);font-size:13px;line-height:1.65;color:var(--t400)">${excerpt}…</div>
         <div class="row" style="margin-top:10px;font-size:11.5px">
           <span class="tag tag-neutral">${ex.mentioned?`已提及 · 位次 ${ex.rank||'—'}`:'未提及'}</span>
           <span class="tag tag-neutral">引用来源 ${ex.n_cites} 个${ex.own_cited?'，含你的域名':'，无一来自你'}</span>
@@ -1282,7 +1290,7 @@ async function vEngines(){
         <div style="font-size:11.5px;color:var(--t600);margin-bottom:8px">每一条都是一次「本该是你」的机会。</div>
         ${(e.top_sources||[]).map(d=>{const mine=d===own||d.endsWith('.'+own);
           return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;box-shadow:inset 0 -1px 0 var(--line)">
-          <span class="dot" style="background:${mine?'var(--a400)':'#595d6c'}"></span>
+          <span class="dot" style="background:${mine?'var(--a400)':'var(--t700)'}"></span>
           <span style="flex:1;font-size:13px">${esc(d)}${mine?' <span class="tag pill-good" style="font-size:10px">你</span>':''}</span></div>`}).join('')
           ||'<div class="muted" style="font-size:12.5px">本期该引擎没有返回引用来源（可能未联网）</div>'}
         <button class="btn btn-ghost" style="align-self:flex-start;margin-top:8px" onclick="go('channels')">到阵地地图看全部 →</button>
@@ -1314,7 +1322,7 @@ function vCompetitors(){
       `<span class="tag tag-outline" style="cursor:pointer;font-size:11px" title="点击到「引擎表现」查看该引擎"
         onclick="ST.engSel=${esc(JSON.stringify(t.platform))};go('engines')">${esc(t.label)} ${pct(t.rate)}</span>`).join(' ')
       ||'<span class="muted" style="font-size:11.5px">—</span>');
-  const meRow=`<tr style="background:linear-gradient(90deg,rgba(145,132,217,.10),transparent)">
+  const meRow=`<tr style="background:linear-gradient(90deg,rgba(255,138,61,.10),transparent)">
         <td><span style="font-size:14px">${esc(D.brand.name)}</span><div style="font-size:10.5px;color:var(--t600)">你</div></td>
         <td><span class="tag pill-good">${pct(h.subs.mention)}</span></td>
         <td style="font-size:13px;color:var(--t400)">提及率口径</td>
@@ -1716,7 +1724,7 @@ function vChannels(){
         ${items.map(c=>`<div data-chan="${esc(c.name)}" style="padding:14px 16px;border-radius:var(--r-md);background:var(--surface);box-shadow:var(--sh-sm);margin-bottom:8px;cursor:pointer"
           title="点击查看建设详情" onclick="chanOpen(${esc(JSON.stringify(c.name))})">
           <div class="row">
-            <span class="dot" style="background:${c.covered?'var(--a400)':'#595d6c'}"></span>
+            <span class="dot" style="background:${c.covered?'var(--a400)':'var(--t700)'}"></span>
             <span style="font-size:15px;font-weight:500">${esc(c.name)}</span>
             <span class="tag tag-outline">${esc(c.kind)}</span>
             <span style="font-size:11.5px;color:var(--t600)">${c.national?('引用量 '+c.national.toLocaleString()):''}${c.position?(' · 平均位置 '+c.position):''}${c.platforms?(' · 覆盖 '+c.platforms+' 端'):''}</span>
@@ -1993,7 +2001,7 @@ function vWorkbench(){
         <div class="card elev" style="padding:14px;gap:9px">
           <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--t600)">必须包含的抽取块（实测增益）</div>
           ${(ck?ck.checks.slice(2):[]).map(c=>`<div class="row" style="gap:8px;font-size:12.5px">
-            <span class="dot" style="background:${c.ok?'var(--accent)':'#595d6c'}"></span>
+            <span class="dot" style="background:${c.ok?'var(--accent)':'var(--t700)'}"></span>
             <span style="flex:1">${esc(c.t)}</span><span style="font-size:11px;color:var(--t600)">${esc(c.lift)}</span></div>`).join('')||'<div class="muted" style="font-size:12px">载入草稿后显示</div>'}
         </div>
         <div class="card elev" style="padding:14px;gap:8px">
@@ -2021,7 +2029,7 @@ function vWorkbench(){
             <span style="font-size:34px;font-weight:500;color:var(--accent)">${ck?ck.grade:'—'}</span>
             <span style="font-size:12px;color:var(--t500)">${ck?(ck.wc+' 词 · '+ck.h2+' 个小节'):''}</span></div>
           ${(ck?ck.checks.slice(0,2):[]).map(c=>`<div class="row" style="gap:8px;font-size:12.5px">
-            <span class="dot" style="background:${c.ok?'var(--accent)':'#595d6c'}"></span><span>${esc(c.t)}</span></div>`).join('')}
+            <span class="dot" style="background:${c.ok?'var(--accent)':'var(--t700)'}"></span><span>${esc(c.t)}</span></div>`).join('')}
         </div>
         ${WB.cur&&WB.cur.kind==='draft'&&D.lint&&D.lint.total?`<div class="card" style="padding:12px 14px;box-shadow:0 0 0 1px var(--a700);gap:5px">
           <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)">初稿风险</div>
@@ -2140,7 +2148,7 @@ async function doPublishSel(rel){
     line.textContent=`→ ${names[i]} 发布中…`;prog.appendChild(line);
     const r=await post('/api/publish/'+SLUG,{platform:codes[i],path:rel});
     if(r.ok){okN++;line.innerHTML=`✓ ${esc(names[i])} 已发布 ${r.url?`<a href="${esc(r.url)}" target="_blank" style="color:var(--a300)">${esc(r.url.slice(0,50))}</a>`:esc(r.note||'')}`}
-    else line.innerHTML=`<span style="color:var(--accent)">✗ ${esc(names[i])} 失败：${esc(r.error||'')}</span>`;
+    else line.innerHTML=`<span style="color:var(--error)">✗ ${esc(names[i])} 失败：${esc(r.error||'')}</span>`;
   }
   toast(okN===codes.length?`已发布到 ${okN} 个渠道`:`${okN}/${codes.length} 个渠道成功，失败的看弹窗明细`,okN===codes.length?'':'err');
   PUB=null;await load(SLUG,true);   // 刷新 content_pub：计划页/问题库/清单状态同步，弹窗保留结果明细
@@ -2249,7 +2257,7 @@ function vReport(){
     </div>
     <h4 style="font-size:16px;margin:34px 0 10px">本期摘要（自动生成）</h4>
     <div class="card elev" style="padding:20px">
-      <div style="font-size:15px;line-height:1.7;color:#cfd3e5;max-width:760px;white-space:pre-line">${esc(summary)}</div>
+      <div style="font-size:15px;line-height:1.7;color:var(--t400);max-width:760px;white-space:pre-line">${esc(summary)}</div>
     </div>
     <h4 style="font-size:16px;margin:34px 0 10px">人工采样表（无 API 的引擎）</h4>
     <p class="muted" style="font-size:12.5px">豆包 App、元宝、百度 AI、ChatGPT 网页版、Google AI Overview 没有公开联网 API。导出采样表，逐题把完整答案原文粘进 <code>\`\`\`answer</code> 块，再导入。</p>
@@ -2343,7 +2351,7 @@ async function vPublishing(){
       return `<h4 style="font-size:16px;margin:20px 0 6px">${label}<span style="font-size:11.5px;color:var(--t600);font-weight:400"> · ${hint}</span></h4>
       <div class="card elev" style="padding:6px 18px">
         ${list.map(({x,i})=>`<div class="row" style="padding:11px 0;box-shadow:inset 0 -1px 0 var(--line)">
-          <span class="dot" style="background:${x.missing.length?'#595d6c':'var(--a400)'}"></span>
+          <span class="dot" style="background:${x.missing.length?'var(--t700)':'var(--a400)'}"></span>
           <span style="flex:1;font-size:13.5px">${esc(x.name)}
             <div class="muted" style="font-size:11.5px;margin-top:1px">${esc(x.note)}</div></span>
           <span style="font-size:11.5px;color:${x.missing.length?'var(--t600)':'var(--a300)'}">${x.missing.length?('缺 '+x.missing.map(esc).join('、')):'已就绪'}</span>
@@ -2362,7 +2370,7 @@ async function vPublishing(){
         <td style="font-size:12px;color:var(--t500)">${esc((r.at||'').slice(0,16).replace('T',' '))}</td>
         <td style="font-size:12.5px">${esc(r.platform_name)}</td>
         <td style="font-size:12.5px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.path||'')}">${esc(r.title||r.path||'')}</td>
-        <td>${r.ok?'<span class="tag tag-accent" style="font-size:10.5px">成功</span>':`<span class="tag tag-dim" style="font-size:10.5px" title="${esc(r.error||'')}">失败</span>`}</td>
+        <td>${r.ok?'<span class="tag pill-good" style="font-size:10.5px">成功</span>':`<span class="tag pill-error" style="font-size:10.5px" title="${esc(r.error||'')}">失败</span>`}</td>
         <td style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.url?`<a href="${esc(r.url)}" target="_blank" style="color:var(--a300)">${esc(r.url)}</a>`:`<span class="muted">${esc(r.note||r.error||'—')}</span>`}</td></tr>`).join('')}
     </tbody></table></div>`:'<div class="muted" style="font-size:12.5px">还没有发布记录——到「行动计划 → 成稿发布」或内容工作台发布第一篇。</div>'}
   </div>`;
@@ -2405,7 +2413,7 @@ async function vSettings(){
           const skip=apiK.filter(k=>!inMkt(k));
           const done=need.filter(k=>k.ok===true).length;
           const row=k=>`<div class="row" style="padding:5px 0;box-shadow:inset 0 -1px 0 var(--line)">
-            <span class="dot" style="background:${k.ok===true?'var(--a400)':'#3f424d'}"></span>
+            <span class="dot" style="background:${k.ok===true?'var(--a400)':'var(--ink-300)'}"></span>
             <span style="flex:1;font-size:13px" title="${esc(k.note||'')}">${esc(k.label)}
               <span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span>
               ${k.search?'<span class="tag tag-outline" style="font-size:10px;margin-left:4px" title="原生联网并返回引用，采样证据质量最高">优先 · 联网</span>':'<span class="muted" style="font-size:10.5px;margin-left:4px" title="API 不联网，测的是模型参数化知识里的品牌认知——同样是有效指标">可选 · 不联网</span>'}</span>
@@ -2421,14 +2429,14 @@ async function vSettings(){
 
           ${skip.length?`<div style="font-size:11px;letter-spacing:.08em;color:var(--t600);margin-top:12px" title="当前项目市场是 ${mktLabel(M)}，这些引擎属于另一个市场">可不配 · 当前项目用不到</div>
           ${skip.map(k=>`<div class="row" style="padding:4px 0;box-shadow:inset 0 -1px 0 var(--line);opacity:.55">
-            <span class="dot" style="background:${k.ok===true?'var(--a400)':'#3f424d'}"></span>
+            <span class="dot" style="background:${k.ok===true?'var(--a400)':'var(--ink-300)'}"></span>
             <span style="flex:1;font-size:12.5px">${esc(k.label)}<span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span></span>
             <span style="font-size:11px;color:var(--t600)">不配不影响当前项目</span>
             <button class="btn btn-ghost" style="font-size:11.5px;padding:2px 8px" onclick="editKey(${k.i})">仍要配置</button></div>`).join('')}`:''}
 
           <div style="font-size:11px;letter-spacing:.08em;color:var(--t600);margin-top:12px">无需配置 · 没有公开 API，走人工周检表</div>
           ${man.filter(k=>M==='both'||k.market===M).map(k=>`<div class="row" style="padding:4px 0;box-shadow:inset 0 -1px 0 var(--line)">
-            <span class="dot" style="background:#3f424d"></span>
+            <span class="dot" style="background:var(--ink-300)"></span>
             <span style="flex:1;font-size:12.5px">${esc(k.label)}<span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span></span>
             <span style="font-size:11px;color:var(--t600)">人工采样 · 无 Key</span></div>`).join('')}
           <div class="row" style="margin-top:6px">
@@ -2589,7 +2597,7 @@ async function vOnboard(){
   const okCn=KEYS.filter(k=>k.ok===true&&k.market==='cn').length;
   const okGl=KEYS.filter(k=>k.ok===true&&k.market==='global').length;
   const noKey=!(okCn+okGl);
-  const bars=[1,2,3].map(i=>`<span style="flex:1;height:3px;border-radius:2px;background:${s>=i?'var(--accent)':'#3f424d'}"></span>`).join('');
+  const bars=[1,2,3].map(i=>`<span style="flex:1;height:3px;border-radius:2px;background:${s>=i?'var(--accent)':'var(--ink-300)'}"></span>`).join('');
   let body='';
   if(s===1){
     body=`<div style="display:flex;flex-direction:column;gap:14px">
@@ -2693,11 +2701,11 @@ function vSiteAudit(){
   const lchain=layers.length?`<div style="display:flex;gap:0;align-items:stretch;margin-top:20px">
     ${layers.map((l,i)=>`
       ${i?'<div style="align-self:center;padding:0 7px;color:var(--t600);flex:none">→</div>':''}
-      <div class="card" style="flex:1;padding:13px 15px;gap:4px;${l.status==='fail'?'box-shadow:0 0 0 1px var(--a700)':l.status==='warn'?'box-shadow:0 0 0 1px var(--a800)':''}"
+      <div class="card" style="flex:1;padding:13px 15px;gap:4px;${l.status==='fail'?'box-shadow:0 0 0 1px var(--error)':l.status==='warn'?'box-shadow:0 0 0 1px var(--warning)':''}"
         title="${esc((l.issues||[]).join('；')||'无问题')}">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
           <span style="font-size:14px;font-weight:500">${esc(l.name)}</span>
-          <span style="font-size:11px;color:${l.status==='ok'?'var(--t600)':l.status==='warn'?'var(--a300)':'var(--accent)'}">${lword[l.status]||''}</span></div>
+          <span style="font-size:11px;color:${l.status==='ok'?'var(--success)':l.status==='warn'?'var(--warning)':'var(--error)'}">${lword[l.status]||''}</span></div>
         <div style="font-size:11px;color:var(--t600)">${esc(l.question||'')}</div>
         ${(l.issues||[]).slice(0,2).map(x=>`<div style="font-size:11.5px;color:var(--t400)">· ${esc(x)}</div>`).join('')}
         ${(l.issues||[]).length>2?`<div style="font-size:11px;color:var(--t600)">…共 ${l.issues.length} 项</div>`:''}
@@ -2859,7 +2867,7 @@ function vSamples(){
   const rows=SMP.rows||[];
   const review=rows.filter(r=>r.needs_review).length,edited=rows.filter(r=>r.manual_override).length;
   const sel=(id,val,opts,label)=>`<label class="small" style="color:var(--t500)">${label}
-    <select onchange="SMPF.${id}=this.value;loadSamples()" style="background:var(--deep);color:var(--text);border:1px solid #3f424d;border-radius:6px;padding:4px 8px;font:inherit;font-size:12.5px;margin-left:4px">
+    <select onchange="SMPF.${id}=this.value;loadSamples()" style="background:var(--deep);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font:inherit;font-size:12.5px;margin-left:4px">
       ${opts.map(o=>`<option value="${esc(o[0])}" ${val===o[0]?'selected':''}>${esc(o[1])}</option>`).join('')}</select></label>`;
   return `<div style="padding:32px 44px 72px;max-width:1360px">
     ${head('现状 · 样本库','每条 AI 答案的元数据都在这里，可人工复核纠正',
@@ -2877,7 +2885,7 @@ function vSamples(){
       <th>问题</th><th style="width:74px">提及</th><th style="width:56px">位次</th>
       <th style="width:150px">竞品</th><th style="width:64px">引用</th><th style="width:96px">标记</th><th style="width:60px"></th>
     </tr></thead><tbody>
-      ${rows.map(r=>`<tr ${r.needs_review?'style="background:rgba(145,132,217,.06)"':''}>
+      ${rows.map(r=>`<tr ${r.needs_review?'style="background:rgba(255,138,61,.08)"':''}>
         <td style="font-size:12px;color:var(--t500)">${esc(r.date)}</td>
         <td style="font-size:12.5px">${esc(r.platform_name||r.platform)}</td>
         <td style="font-size:11px;color:var(--t600)" title="${esc((r.evidence_level||'')+(r.session_label?' · '+r.session_label:''))}">${({api:'API',manual:'手工',extension:'插件'})[r.sample_mode]||esc(r.sample_mode||'')}${r.session_mode&&r.session_mode!=='incognito'?`<div style="font-size:9.5px;color:${r.session_mode==='personal'?'var(--accent)':'var(--t700)'}">${r.session_mode==='personal'?'个人号':'专用号'}</div>`:''}</td>
@@ -2923,7 +2931,7 @@ async function sampleModal(key){
     <div style="font-size:12px;color:var(--t600);margin:14px 0 4px">人工复核（改完立刻重算当日指标）</div>
     <div class="row" style="gap:8px;flex-wrap:wrap">
       <label class="small">品牌被提及
-        <select id="sm-men" style="background:var(--deep);color:var(--text);border:1px solid #3f424d;border-radius:6px;padding:4px 8px;font:inherit;margin-left:4px">
+        <select id="sm-men" style="background:var(--deep);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font:inherit;margin-left:4px">
           <option value="1" ${a.brand_mentioned?'selected':''}>是</option>
           <option value="0" ${a.brand_mentioned?'':'selected'}>否</option></select></label>
       <label class="small">位次 <input id="sm-rank" class="input" style="width:64px;display:inline-block;padding:4px 8px" value="${a.brand_rank||0}"></label>

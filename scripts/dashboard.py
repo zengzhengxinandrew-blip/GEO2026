@@ -266,17 +266,17 @@ LOGIN_PATH = "/__login"
 
 # 令牌走 POST 表单的请求体提交，不拼进 URL——URL 会被 Nginx 等反代写进访问日志。
 _LOGIN_HTML_HEAD = """<!doctype html><meta charset="utf-8"><title>GeoLook</title>
-<body style="background:#131622;color:#e8eaf2;font-family:system-ui;display:flex;
+<body style="background:#FFF9F4;color:#1F2937;font-family:system-ui;display:flex;
 align-items:center;justify-content:center;height:100vh;margin:0">
 <form method="post" action="/__login" style="text-align:center">
-<div style="font-size:20px;margin-bottom:14px">Geo<span style="color:#9184d9">Look</span></div>
+<div style="font-size:20px;margin-bottom:14px">Geo<span style="color:#FF8A3D">Look</span></div>
 <input name="token" type="password" placeholder="访问令牌 / Access token" autofocus
-style="background:#1b1e2e;border:1px solid #3a3f55;border-radius:8px;color:#e8eaf2;
+style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:8px;color:#1F2937;
 padding:10px 14px;font-size:14px;width:240px">
-<button type="submit" style="background:#9184d9;border:0;border-radius:8px;color:#101223;
+<button type="submit" style="background:#FF8A3D;border:0;border-radius:8px;color:#6B2C08;
 padding:10px 18px;font-size:14px;margin-left:8px;cursor:pointer">进入</button>
 </form>"""
-_LOGIN_HTML_WRONG = ('<div style="text-align:center;color:#e0685f;font-size:13px;'
+_LOGIN_HTML_WRONG = ('<div style="text-align:center;color:#DC2626;font-size:13px;'
                      'margin-top:14px">令牌不对，再试一次</div>')
 _LOGIN_HTML_TAIL = "</body>"
 
