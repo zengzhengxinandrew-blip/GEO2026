@@ -260,3 +260,26 @@ Questions, ideas or collaboration — email [bingqiang2008@gmail.com](mailto:bin
 ## License
 
 [MIT](LICENSE)
+
+## Deployment notes
+
+Pushes to `main` trigger a GitHub Actions deploy to the server. The workflow
+diffs the incoming commit against the last deployed one and **only rebuilds the
+image when files that affect the runtime changed**:
+
+| Changed files | What the deploy does | Downtime |
+| --- | --- | --- |
+| `Dockerfile`, `requirements.txt`, `.dockerignore`, `scripts/*`, `references/*`, `SKILL.md` | rebuild image + recreate container | brief restart |
+| `deploy/caddy/Caddyfile` | graceful `caddy reload` | none |
+| `docker-compose.yml` | `up -d --no-build` | none (unless service config changed) |
+| docs, tests, `.github`, markdown | config only, no rebuild | none |
+| anything unclassified | rebuild (safe default) | brief restart |
+
+The last deployed commit is recorded in `~/.geolook_last_sha` on the server.
+If that file is missing the deploy falls back to a full rebuild rather than
+guessing the change set.
+
+`.dockerignore` keeps `docs/`, `tests/`, `.github/`, `deploy/` and markdown out
+of the build context, so edits to them cannot invalidate the `COPY . .` layer
+either. `scripts/` and `references/` are required at runtime and are always
+included.
