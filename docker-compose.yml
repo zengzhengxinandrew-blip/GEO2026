@@ -1,7 +1,18 @@
 services:
+  fixperm:
+    image: alpine:3
+    restart: "no"
+    command: "chown -R 1000:1000 /data && chmod -R u+rwX,go+rX /data"
+    volumes:
+      - ./data:/data
+
   geolook:
     build: .
     restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      fixperm:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
