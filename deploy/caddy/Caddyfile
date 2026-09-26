@@ -11,3 +11,9 @@
 
 	reverse_proxy geolook:8765
 }
+
+# 裸域之外的 www 变体：单独签发证书并永久跳转到主域，
+# 否则该 SNI 无站点匹配会导致 TLS 握手失败（ERR_SSL_PROTOCOL_ERROR）。
+www.{$GEOLOOK_DOMAIN} {
+	redir https://{$GEOLOOK_DOMAIN}{uri} permanent
+}
