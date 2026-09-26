@@ -64,17 +64,18 @@ jobs:
           if [ -f "$STATE_FILE" ]; then
             OLD_SHA=$(head -1 "$STATE_FILE")
           fi
-          if [ -z "$OLD_SHA" ]; then
-            OLD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-          fi
-
-          echo "== Deploy $(git rev-parse --short "$OLD_SHA" 2>/dev/null || echo '?') -> $(git rev-parse --short "$NEW_SHA") =="
+          # 基准只能来自上次部署记录，绝不能退回本地 HEAD：
+          # 若这次是从服务器提交的 commit，本地 HEAD 已经等于目标版本，
+          # diff 会得到空结果，从而误判"没有变更"而跳过构建，代码更新永远不生效。
 
           # 变更清单必须在 reset --hard 之前算：比的是两个 commit，不受工作区影响
           if [ -n "$OLD_SHA" ] && git cat-file -e "$OLD_SHA^{commit}" 2>/dev/null; then
             CHANGED=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
+            echo "== Deploy $(git rev-parse --short "$OLD_SHA") -> $(git rev-parse --short "$NEW_SHA") =="
           else
+            # 没有上次部署记录时无法判断变更范围，保守重建
             CHANGED="__ALL__"
+            echo "== Deploy (no previous deploy state) -> $(git rev-parse --short "$NEW_SHA") =="
           fi
 
           git reset --hard "$NEW_SHA"
