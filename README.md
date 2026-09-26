@@ -77,7 +77,7 @@ Most GEO products are **monitoring SaaS**: they show mention rates and rankings,
 | **Cost** | Subscription | Free and open source; you only pay your own engine API sampling costs (can be zero — manual sampling works) |
 | **Deliverables** | Dashboard screenshots | Client-ready diagnosis report / strategy / execution plan / ticket CSV — built for agencies and consultants |
 
-Honest limits: single-machine tool, no accounts or team collaboration; sampling frequency and volume depend on your own API budget; "suspected negative" flags are leads for human review, not verdicts. These are deliberate design choices.
+Honest limits: the self-hosted account system provides admin-managed access but not per-project permissions; sampling frequency and volume depend on your own API budget; "suspected negative" flags are leads for human review, not verdicts. These are deliberate design choices.
 
 ## 4. Deployment
 
@@ -229,7 +229,7 @@ All six audit dimensions are anchored in public empirical data; `scripts/audit.p
 
 ## Design principles & security boundaries
 
-- **Single-machine, self-hosted**: stdlib `http.server` on 127.0.0.1; no DB, no accounts; data is plain files
+- **Self-hosted accounts**: username/password login with admin-created users; user data and project data remain plain local files
 - **Never fabricate**: facts only from site copy; inventing competitor names is forbidden; AI drafts must pass lint + human review
 - **Verification is the product**: anything auto-verifiable never relies on someone saying "done"
 - **Publishing is always manual**: channel credentials in local `.env` (mode 600); every publish is an explicit click; WeChat/WordPress go to drafts only

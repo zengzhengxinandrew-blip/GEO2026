@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GeoLook · 生成式引擎优化平台</title>
+<title>Get Found By AI · 生成式引擎优化平台</title>
 <style>
 /* 方案 A · 暖阳橘：克制品牌橙 + 暖白工作区 + 中性灰信息层级 */
 :root{
@@ -58,6 +58,8 @@ a{color:var(--accent);text-underline-offset:3px}
 .pill-good{background:rgba(47,133,90,.12);color:var(--success)}
 .pill-warn{background:rgba(180,83,9,.12);color:var(--warning)}
 .pill-error{background:rgba(220,38,38,.10);color:var(--error)}
+.engine-key-row.configured{background:rgba(47,133,90,.07)}
+.engine-key-row.configured .engine-key-status,.engine-key-row.configured .engine-key-action{color:var(--success)}
 .tbl{overflow-x:auto}
 .tbl .table{min-width:820px}
 .table{width:100%;border-collapse:collapse;font-size:14px}
@@ -121,6 +123,13 @@ pre.log{background:var(--deep);border-radius:var(--r-md);box-shadow:var(--sh-sm)
 .navit.on{background:var(--brand-50);color:var(--brand-800)}
 .navit .mark{width:2px;height:14px;border-radius:2px;flex:none;background:transparent}
 .navit.on .mark{background:var(--accent)}
+.sidebar-brand-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.wordmark{font-weight:500;font-size:16px;letter-spacing:0;white-space:nowrap;line-height:1.2}
+.lang-switch{display:inline-flex;flex:none;overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface)}
+.lang-btn{min-width:30px;height:27px;padding:0 7px;border:0;border-left:1px solid var(--border);background:transparent;
+  color:var(--t600);font:500 10.5px/1 var(--font);cursor:pointer}
+.lang-btn:first-child{border-left:0}.lang-btn:hover{background:var(--brand-50);color:var(--brand-700)}
+.lang-btn.on{background:var(--brand-100);color:var(--brand-700)}
 .navit .bdg{margin-left:auto;font-size:10.5px;color:var(--t500)}
 
 /* KPI 栅格与工作台三栏用 class 而非内联样式，方便窄屏媒体查询覆盖 */
@@ -182,7 +191,7 @@ function progBar(p,f,w){ // 任务级 before/after：首测(f) → 当前(p) →
     <div style="font-size:11px;color:var(--t500)">${esc(p.label)}：首测 ${fmt(f&&f.cur)} → 当前 <b style="color:var(--t300)">${fmt(p.cur)}</b> · 目标 ${op}${fmt(p.target)}</div>
     <div class="bar" style="margin-top:3px;height:5px"><div style="height:100%;width:${Math.round(ratio*100)}%;background:${ratio>=1?'var(--a400)':'var(--accent)'};border-radius:4px"></div></div></div>`}
 const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
-let D=null,SLUG=null,R='overview',ACTIONS={},POLL=null,RUNNING=null,LASTJOB=null,LOGOFF=0;
+let D=null,SLUG=null,R='overview',ACTIONS={},POLL=null,RUNNING=null,LASTJOB=null,LOGOFF=0,ME=null,USERS=null;
 let ST={gapTab:'content',engSel:null,wq:null,obStep:1,obSlug:null,obNoSample:false,obFail:false,obUrl:'',obName:'',obMkt:'both'};
 
 function toast(m,k=''){const t=document.createElement('div');t.className='toast '+k;t.textContent=m;
@@ -207,11 +216,11 @@ function head(kicker,title,sub){return `<div class="kicker">${esc(kicker)}</div>
    字典未覆盖的保持中文(优雅降级);项目数据(问题库/工单/阵地文案)跟随数据语言,不翻。*/
 const ULANG=(()=>{
   const q=new URLSearchParams(location.search).get('lang');
-  if(['zh','en','ja'].indexOf(q)>=0){try{localStorage.setItem('ulang',q)}catch(e){}return q}
-  const s=localStorage.getItem('ulang');if(['zh','en','ja'].indexOf(s)>=0)return s;
+  if(['zh','en'].indexOf(q)>=0){try{localStorage.setItem('ulang',q)}catch(e){}return q}
+  const s=localStorage.getItem('ulang');if(['zh','en'].indexOf(s)>=0)return s;
   const l=(navigator.language||'').toLowerCase();
-  return l.indexOf('zh')===0?'zh':l.indexOf('ja')===0?'ja':'en'})();
-document.documentElement.lang={zh:'zh-CN',en:'en',ja:'ja'}[ULANG]||'zh-CN';
+  return l.indexOf('zh')===0?'zh':'en'})();
+document.documentElement.lang={zh:'zh-CN',en:'en'}[ULANG]||'zh-CN';
 function setLang(l){localStorage.setItem('ulang',l);location.reload()}
 const UI_D={en:{
 '生成式引擎优化平台':'Generative Engine Optimization','当前品牌':'CURRENT BRAND','切换 ▾':'Switch ▾',
@@ -1030,8 +1039,7 @@ function uiTranslate(root){
 new MutationObserver(ms=>{if(ULANG==='zh')return;
   for(const m of ms)m.addedNodes.forEach(n=>uiTranslate(n))
 }).observe(document.body,{childList:true,subtree:true});
-if(ULANG==='en')document.title='GeoLook · Generative Engine Optimization Platform';
-if(ULANG==='ja')document.title='GeoLook · 生成エンジン最適化プラットフォーム';
+if(ULANG==='en')document.title='Get Found By AI · Generative Engine Optimization Platform';
 
 /* ===================== 导航 ===================== */
 const NAV=[
@@ -1039,7 +1047,7 @@ const NAV=[
  {t:'诊断 · 为什么是这样',items:[['siteaudit','站点体检'],['gaps','差距诊断'],['channels','阵地地图'],['facts','品牌事实库']]},
  {t:'提升 · 该做什么',items:[['plan','行动计划'],['workbench','内容工作台'],['assets','部署资产']]},
  {t:'成效 · 做了有没有用',items:[['verify','效果验收'],['report','报告与交付']]},
- {t:'账号',items:[['settings','设置'],['publishing','发布渠道']]},
+ {t:'账号',items:[['settings','设置'],['publishing','发布渠道'],['users','用户管理',true]]},
 ];
 function badge(k){
   if(!D||!D.analytics)return'';
@@ -1057,11 +1065,10 @@ function renderSide(){
   const b=(D&&D.brand)||{};
   $('#side').innerHTML=`
   <div style="padding:0 8px">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <div style="font-weight:500;font-size:17px;letter-spacing:-.01em">Geo<span style="color:var(--accent)">Look</span></div>
-      <span style="display:flex;gap:2px">
-        ${[['zh','中'],['en','EN'],['ja','日']].map(([l,t])=>`<button onclick="setLang('${l}')"
-          style="background:${ULANG===l?'var(--a900)':'none'};border:0;color:${ULANG===l?'var(--a300)':'var(--t600)'};font-size:10.5px;padding:2px 6px;border-radius:5px;cursor:pointer">${t}</button>`).join('')}
+    <div class="sidebar-brand-row">
+      <div class="wordmark">Get Found By <span style="color:var(--accent)">AI</span></div>
+      <span class="lang-switch" aria-label="界面语言">
+        ${[['zh','中'],['en','EN']].map(([l,t])=>`<button class="lang-btn ${ULANG===l?'on':''}" onclick="setLang('${l}')" aria-pressed="${ULANG===l}">${t}</button>`).join('')}
       </span>
     </div>
     <div style="font-size:11px;color:var(--t500);margin-top:2px">生成式引擎优化平台</div>
@@ -1075,7 +1082,7 @@ function renderSide(){
   <nav style="display:flex;flex-direction:column;gap:16px">
     ${NAV.map(g=>`<div style="display:flex;flex-direction:column;gap:2px">
       <div class="navgrp">${esc(g.t)}</div>
-      ${g.items.map(([k,t])=>`<button class="navit ${R===k?'on':''}" onclick="go('${k}')">
+      ${g.items.filter(([,t,adminOnly])=>!adminOnly||(ME&&ME.role==='admin')).map(([k,t])=>`<button class="navit ${R===k?'on':''}" onclick="go('${k}')">
         <span class="mark"></span><span>${t}</span><span class="bdg">${badge(k)}</span></button>`).join('')}
     </div>`).join('')}
   </nav>
@@ -1085,6 +1092,10 @@ function renderSide(){
     <div style="margin-top:8px">${RUNNING
       ?`<span class="spin"></span>任务运行中`
       :`<button class="btn btn-ghost" style="font-size:12px;padding:2px 4px" onclick="runAction('serve')">▶ 跑完整一期</button>`}</div>
+    <div class="row" style="margin-top:9px;padding-top:8px;box-shadow:inset 0 1px 0 var(--line);gap:5px">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc((ME&&ME.username)||'')}">${esc((ME&&ME.username)||'用户')}</span>
+      <form method="post" action="/__logout"><button class="btn btn-ghost" style="font-size:11px;padding:2px 4px" type="submit">退出</button></form>
+    </div>
   </div>`;
 }
 
@@ -2376,6 +2387,70 @@ async function vPublishing(){
   </div>`;
 }
 
+/* ===================== 用户管理 ===================== */
+async function vUsers(){
+  if(!ME||ME.role!=='admin')return `<div style="padding:44px"><h3>无权访问</h3><p class="soft">只有管理员可以管理用户。</p></div>`;
+  USERS=await api('/api/users');
+  if(!Array.isArray(USERS))return `<div style="padding:44px"><h3>用户加载失败</h3><p class="soft">${esc((USERS&&USERS.error)||'未知错误')}</p></div>`;
+  return `<div style="padding:32px 44px 72px;max-width:980px">
+    ${head('账号 · 用户管理','用户与访问权限','新用户由管理员创建，系统不开放公开注册。')}
+    <div class="row" style="justify-content:flex-end;margin:22px 0 10px">
+      <button class="btn btn-primary" onclick="createUserModal()">+ 创建用户</button>
+    </div>
+    <div class="tbl"><table class="table"><thead><tr><th>用户名</th><th style="width:110px">角色</th><th style="width:100px">状态</th><th style="width:170px">创建时间</th><th style="width:250px"></th></tr></thead><tbody>
+      ${USERS.map(u=>`<tr>
+        <td><span style="font-size:13.5px;font-weight:500">${esc(u.username)}</span>${u.username===(ME&&ME.username)?' <span class="tag tag-accent">当前</span>':''}</td>
+        <td><span class="tag ${u.role==='admin'?'tag-outline':'tag-neutral'}">${u.role==='admin'?'管理员':'普通用户'}</span></td>
+        <td><span class="tag ${u.active?'pill-good':'tag-dim'}">${u.active?'已启用':'已停用'}</span></td>
+        <td style="font-size:12px;color:var(--t500)">${esc((u.created_at||'').slice(0,16).replace('T',' '))}</td>
+        <td><div class="row" style="justify-content:flex-end;gap:5px">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="resetUserModal(${esc(JSON.stringify(u.username))})">重置密码</button>
+          <button class="btn btn-secondary" style="font-size:12px" ${u.username===(ME&&ME.username)?'disabled':''}
+            onclick="setUserActive(${esc(JSON.stringify(u.username))},${!u.active})">${u.active?'停用':'启用'}</button>
+          <button class="btn btn-ghost" style="font-size:12px;color:var(--error)" ${u.username===(ME&&ME.username)?'disabled':''}
+            onclick="removeUser(${esc(JSON.stringify(u.username))})">删除</button>
+        </div></td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted" style="font-size:12px;margin-top:14px">密码使用 scrypt 加密哈希存储，管理员只能重置，无法查看原密码。</p>
+  </div>`;
+}
+function createUserModal(){
+  modal(`<h4 style="font-size:17px">创建用户</h4>
+    <div class="field"><label>用户名</label><input id="u-name" class="input" autocomplete="off" placeholder="3-32 位字母、数字或 . _ -"></div>
+    <div class="field"><label>初始密码</label><input id="u-pass" class="input" type="password" autocomplete="new-password" placeholder="至少 8 个字符"></div>
+    <div class="field"><label>角色</label><div class="seg">
+      <label class="seg-opt"><input type="radio" name="urole" value="user" checked>普通用户</label>
+      <label class="seg-opt"><input type="radio" name="urole" value="admin">管理员</label></div></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn btn-secondary" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveUser()">创建</button></div>`);
+}
+async function saveUser(){
+  const r=await post('/api/users',{action:'create',username:$('#u-name').value.trim(),password:$('#u-pass').value,
+    role:document.querySelector('input[name=urole]:checked').value});
+  if(!r.ok){toast(r.error||'创建失败','err');return}
+  closeModal();toast('用户已创建');USERS=null;render();
+}
+function resetUserModal(username){
+  modal(`<h4 style="font-size:17px">重置密码</h4><p class="muted" style="font-size:12px">${esc(username)}</p>
+    <div class="field"><label>新密码</label><input id="u-pass" class="input" type="password" autocomplete="new-password" placeholder="至少 8 个字符"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn btn-secondary" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="resetUser(${esc(JSON.stringify(username))})">保存</button></div>`);
+}
+async function resetUser(username){
+  const r=await post('/api/users',{action:'reset-password',username,password:$('#u-pass').value});
+  if(!r.ok){toast(r.error||'重置失败','err');return}
+  closeModal();toast('密码已重置');render();
+}
+async function setUserActive(username,active){
+  const r=await post('/api/users',{action:'set-active',username,active});
+  toast(r.ok?(active?'用户已启用':'用户已停用'):(r.error||'操作失败'),r.ok?'':'err');if(r.ok)render();
+}
+async function removeUser(username){
+  if(!confirm(`确定删除用户「${username}」？`))return;
+  const r=await post('/api/users',{action:'delete',username});
+  toast(r.ok?'用户已删除':(r.error||'删除失败'),r.ok?'':'err');if(r.ok)render();
+}
+
 async function vSettings(){
   if(!KEYS)KEYS=await api('/api/keys');
   if(!Array.isArray(KEYS))KEYS=[];
@@ -2412,13 +2487,13 @@ async function vSettings(){
           const need=apiK.filter(inMkt).sort((a,b)=>(b.search?1:0)-(a.search?1:0));
           const skip=apiK.filter(k=>!inMkt(k));
           const done=need.filter(k=>k.ok===true).length;
-          const row=k=>`<div class="row" style="padding:5px 0;box-shadow:inset 0 -1px 0 var(--line)">
-            <span class="dot" style="background:${k.ok===true?'var(--a400)':'var(--ink-300)'}"></span>
+          const row=k=>`<div class="row engine-key-row ${k.ok===true?'configured':''}" style="padding:5px 6px;box-shadow:inset 0 -1px 0 var(--line);border-radius:6px">
+            <span class="dot" style="background:${k.ok===true?'var(--success)':'var(--ink-300)'}"></span>
             <span style="flex:1;font-size:13px" title="${esc(k.note||'')}">${esc(k.label)}
               <span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span>
               ${k.search?'<span class="tag tag-outline" style="font-size:10px;margin-left:4px" title="原生联网并返回引用，采样证据质量最高">优先 · 联网</span>':'<span class="muted" style="font-size:10.5px;margin-left:4px" title="API 不联网，测的是模型参数化知识里的品牌认知——同样是有效指标">可选 · 不联网</span>'}</span>
-            <span style="font-size:11.5px;color:var(--t600)">${k.ok===true?'已配置'+(k.key_tail?' ····'+esc(k.key_tail):''):esc(k.env)}</span>
-            <button class="btn ${k.ok===true?'btn-ghost':'btn-secondary'}" style="font-size:12px;padding:2px 8px" onclick="editKey(${k.i})">${k.ok===true?'修改':'配置'}</button></div>`;
+            <span class="engine-key-status" style="font-size:11.5px;color:${k.ok===true?'var(--success)':'var(--t600)'}">${k.ok===true?'已配置'+(k.key_tail?' ····'+esc(k.key_tail):''):esc(k.env)}</span>
+            <button class="btn ${k.ok===true?'btn-ghost engine-key-action':'btn-secondary'}" style="font-size:12px;padding:2px 8px" onclick="editKey(${k.i})">${k.ok===true?'修改':'配置'}</button></div>`;
           return `
           <div><div style="font-size:15px;font-weight:500">引擎与密钥</div>
             <div style="font-size:11.5px;color:var(--t600)">Key 写入项目根目录 .env，立即生效。<b>配好任意 1 个引擎就能开始采样</b>，配得越多覆盖越全。</div></div>
@@ -2428,8 +2503,8 @@ async function vSettings(){
           ${need.map(row).join('')}
 
           ${skip.length?`<div style="font-size:11px;letter-spacing:.08em;color:var(--t600);margin-top:12px" title="当前项目市场是 ${mktLabel(M)}，这些引擎属于另一个市场">可不配 · 当前项目用不到</div>
-          ${skip.map(k=>`<div class="row" style="padding:4px 0;box-shadow:inset 0 -1px 0 var(--line);opacity:.55">
-            <span class="dot" style="background:${k.ok===true?'var(--a400)':'var(--ink-300)'}"></span>
+          ${skip.map(k=>`<div class="row engine-key-row ${k.ok===true?'configured':''}" style="padding:4px 6px;box-shadow:inset 0 -1px 0 var(--line);opacity:.65;border-radius:6px">
+            <span class="dot" style="background:${k.ok===true?'var(--success)':'var(--ink-300)'}"></span>
             <span style="flex:1;font-size:12.5px">${esc(k.label)}<span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span></span>
             <span style="font-size:11px;color:var(--t600)">不配不影响当前项目</span>
             <button class="btn btn-ghost" style="font-size:11.5px;padding:2px 8px" onclick="editKey(${k.i})">仍要配置</button></div>`).join('')}`:''}
@@ -2468,7 +2543,7 @@ async function vSettings(){
     <div class="row" style="margin-top:14px;font-size:12.5px;color:var(--t500)">
       发布渠道（GitHub / WordPress / 公众号 / Webhook）已独立成页 →
       <button class="btn btn-ghost" style="font-size:12.5px;color:var(--a300)" onclick="go('publishing')">打开发布渠道</button></div>
-    <p class="muted" style="font-size:12px;margin-top:16px">团队与权限：单机自托管版，无账号体系；服务只绑定 127.0.0.1。多人使用需自行加反向代理与认证。</p>
+    <p class="muted" style="font-size:12px;margin-top:16px">团队与权限：管理员可在「用户管理」中创建、停用用户或重置密码。</p>
   </div>`;
 }
 function editPub(i){
@@ -2967,7 +3042,7 @@ async function delSample(key){
 const VIEWS={overview:vOverview,engines:vEngines,competitors:vCompetitors,questions:vQuestions,
   samples:vSamples,siteaudit:vSiteAudit,assets:vAssets,
   gaps:vGaps,channels:vChannels,facts:vFacts,plan:vPlan,workbench:vWorkbench,
-  verify:vVerify,report:vReport,settings:vSettings,publishing:vPublishing,onboard:vOnboard};
+  verify:vVerify,report:vReport,settings:vSettings,publishing:vPublishing,users:vUsers,onboard:vOnboard};
 async function render(){
   renderSide();
   const fn=VIEWS[R]||vOverview;
@@ -3009,6 +3084,8 @@ async function load(slug,keep){
   render();
 }
 (async()=>{
+  ME=await api('/api/auth/me');
+  if(!ME||ME.error)ME={};
   ACTIONS=await api('/api/actions');
   if(!ACTIONS||ACTIONS.error)ACTIONS={};
   const ps=await api('/api/projects');

@@ -16,6 +16,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import threading
 import time
 import webbrowser
@@ -234,12 +235,197 @@ def create_project(url: str, name: str, slug: str, market: str, max_pages: int) 
     return CLI.cmd_init(a)
 
 
-# ---------------------------------------------------------------- 访问令牌
-# 看板默认只绑 127.0.0.1；要暴露到公网（GEOLOOK_HOST=0.0.0.0）必须设 GEOLOOK_TOKEN。
-# 浏览器首次带 ?token= 访问后种 HttpOnly cookie（存摘要不存原文），之后正常访问；
-# API 调用也可带 X-Geolook-Token 头。
+# ---------------------------------------------------------------- 用户认证
+# 浏览器使用用户名/密码 + HttpOnly 会话 cookie。GEOLOOK_TOKEN 仅保留给
+# 脚本、浏览器扩展和旧链接，不作为浏览器的日常登录方式。
 
-AUTH_COOKIE = "glk_auth"
+AUTH_COOKIE = "glk_auth"          # 兼容旧 token cookie
+SESSION_COOKIE = "glk_session"
+LOGIN_PATH = "/__login"
+SETUP_PATH = "/__setup"
+LOGOUT_PATH = "/__logout"
+SESSION_TTL = 12 * 60 * 60
+_AUTH_LOCK = threading.RLock()
+_SESSIONS: dict[str, dict] = {}
+_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+
+
+def _users_path() -> Path:
+    return Path(os.environ.get("GEOLOOK_USERS_FILE", G.WORK / ".auth" / "users.json")).expanduser()
+
+
+def _load_users() -> list[dict]:
+    data = G.read_json(_users_path(), {"users": []}) or {"users": []}
+    return data.get("users", []) if isinstance(data.get("users"), list) else []
+
+
+def _save_users(users: list[dict]) -> None:
+    path = _users_path()
+    G.write_json(path, {"version": 1, "users": users})
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _public_user(user: dict) -> dict:
+    return {k: user.get(k) for k in
+            ("username", "role", "active", "created_at", "updated_at")}
+
+
+def _validate_username(username: str) -> str:
+    username = (username or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+        raise ValueError("用户名须为 3-32 位，只能包含字母、数字、点、下划线或连字符")
+    return username
+
+
+def _validate_password(password: str) -> str:
+    if len(password or "") < 8:
+        raise ValueError("密码至少需要 8 个字符")
+    if len(password) > 256:
+        raise ValueError("密码最多 256 个字符")
+    return password
+
+
+def _hash_password(password: str, *, salt: bytes | None = None) -> str:
+    """使用标准库 scrypt，避免密码或可逆结果落盘。"""
+    password = _validate_password(password)
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt,
+                            n=16384, r=8, p=1, dklen=32)
+    return f"scrypt$16384$8$1${salt.hex()}${digest.hex()}"
+
+
+def _password_ok(password: str, encoded: str) -> bool:
+    try:
+        algo, n, r, p, salt, expected = encoded.split("$", 5)
+        if algo != "scrypt":
+            return False
+        actual = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt),
+                                n=int(n), r=int(r), p=int(p), dklen=len(bytes.fromhex(expected)))
+        return hmac.compare_digest(actual.hex(), expected)
+    except (TypeError, ValueError):
+        return False
+
+
+def users_public() -> list[dict]:
+    with _AUTH_LOCK:
+        return [_public_user(u) for u in _load_users()]
+
+
+def create_user(username: str, password: str, role: str = "user") -> dict:
+    username = _validate_username(username)
+    if role not in ("admin", "user"):
+        raise ValueError("角色必须是 admin 或 user")
+    password_hash = _hash_password(password)
+    with _AUTH_LOCK:
+        users = _load_users()
+        if any(u.get("username", "").casefold() == username.casefold() for u in users):
+            raise ValueError("用户名已存在")
+        now = G.now_iso()
+        user = {"username": username, "password_hash": password_hash, "role": role,
+                "active": True, "created_at": now, "updated_at": now}
+        users.append(user)
+        _save_users(users)
+        return _public_user(user)
+
+
+def authenticate_user(username: str, password: str) -> dict | None:
+    with _AUTH_LOCK:
+        for user in _load_users():
+            if (user.get("username", "").casefold() == (username or "").strip().casefold()
+                    and user.get("active", True)
+                    and _password_ok(password or "", user.get("password_hash", ""))):
+                return _public_user(user)
+    return None
+
+
+def update_user(username: str, *, password: str | None = None,
+                active: bool | None = None) -> dict:
+    password_hash = _hash_password(password) if password is not None else None
+    with _AUTH_LOCK:
+        users = _load_users()
+        user = next((u for u in users if u.get("username", "").casefold()
+                     == (username or "").casefold()), None)
+        if not user:
+            raise ValueError("用户不存在")
+        if active is False and user.get("role") == "admin":
+            active_admins = [u for u in users if u.get("role") == "admin" and u.get("active", True)]
+            if len(active_admins) <= 1:
+                raise ValueError("不能停用最后一个管理员")
+        if password_hash is not None:
+            user["password_hash"] = password_hash
+        if active is not None:
+            user["active"] = bool(active)
+        user["updated_at"] = G.now_iso()
+        _save_users(users)
+        return _public_user(user)
+
+
+def delete_user(username: str, actor: str) -> None:
+    if username.casefold() == actor.casefold():
+        raise ValueError("不能删除当前登录用户")
+    with _AUTH_LOCK:
+        users = _load_users()
+        target = next((u for u in users if u.get("username", "").casefold()
+                       == username.casefold()), None)
+        if not target:
+            raise ValueError("用户不存在")
+        if target.get("role") == "admin" and sum(
+                1 for u in users if u.get("role") == "admin" and u.get("active", True)) <= 1:
+            raise ValueError("不能删除最后一个管理员")
+        _save_users([u for u in users if u is not target])
+
+
+def _new_session(user: dict) -> str:
+    sid = secrets.token_urlsafe(32)
+    with _AUTH_LOCK:
+        _SESSIONS[sid] = {"user": user, "expires": time.time() + SESSION_TTL}
+    return sid
+
+
+def _cookie(cookie_header: str | None, name: str) -> str:
+    for part in (cookie_header or "").split(";"):
+        k, _, v = part.strip().partition("=")
+        if k == name:
+            return v
+    return ""
+
+
+def _session_user(cookie_header: str | None) -> dict | None:
+    sid = _cookie(cookie_header, SESSION_COOKIE)
+    if not sid:
+        return None
+    with _AUTH_LOCK:
+        session = _SESSIONS.get(sid)
+        if not session or session["expires"] <= time.time():
+            _SESSIONS.pop(sid, None)
+            return None
+        # 用户被停用后，已签发会话也立即失效。
+        fresh = next((u for u in _load_users()
+                      if u.get("username", "").casefold()
+                      == session["user"]["username"].casefold()
+                      and u.get("active", True)), None)
+        if not fresh:
+            _SESSIONS.pop(sid, None)
+            return None
+        session["expires"] = time.time() + SESSION_TTL
+        session["user"] = _public_user(fresh)
+        return session["user"]
+
+
+def ensure_bootstrap_user(token: str | None = None) -> None:
+    """服务器部署首次启动时自动创建管理员。
+
+    优先用 GEOLOOK_ADMIN_PASSWORD；未配时沿用 GEOLOOK_TOKEN 作为初始密码，
+    这样升级现有部署不会被锁在门外。
+    """
+    if _load_users():
+        return
+    password = os.environ.get("GEOLOOK_ADMIN_PASSWORD") or token
+    if password:
+        create_user(os.environ.get("GEOLOOK_ADMIN_USER", "admin"), password, "admin")
 
 
 def _token_digest(token: str) -> str:
@@ -262,33 +448,39 @@ def auth_ok(token: str | None, cookie_header: str | None,
     return False
 
 
-LOGIN_PATH = "/__login"
-
-# 令牌走 POST 表单的请求体提交，不拼进 URL——URL 会被 Nginx 等反代写进访问日志。
-_LOGIN_HTML_HEAD = """<!doctype html><meta charset="utf-8"><title>GeoLook</title>
-<body style="background:#FFF9F4;color:#1F2937;font-family:system-ui;display:flex;
-align-items:center;justify-content:center;height:100vh;margin:0">
-<form method="post" action="/__login" style="text-align:center">
-<div style="font-size:20px;margin-bottom:14px">Geo<span style="color:#FF8A3D">Look</span></div>
-<input name="token" type="password" placeholder="访问令牌 / Access token" autofocus
-style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:8px;color:#1F2937;
-padding:10px 14px;font-size:14px;width:240px">
-<button type="submit" style="background:#FF8A3D;border:0;border-radius:8px;color:#6B2C08;
-padding:10px 18px;font-size:14px;margin-left:8px;cursor:pointer">进入</button>
-</form>"""
-_LOGIN_HTML_WRONG = ('<div style="text-align:center;color:#DC2626;font-size:13px;'
-                     'margin-top:14px">令牌不对，再试一次</div>')
-_LOGIN_HTML_TAIL = "</body>"
-
-
-def _login_html(wrong: bool = False) -> str:
-    return _LOGIN_HTML_HEAD + (_LOGIN_HTML_WRONG if wrong else "") + _LOGIN_HTML_TAIL
+def _login_html(wrong: bool = False, setup: bool = False, message: str = "") -> str:
+    action = SETUP_PATH if setup else LOGIN_PATH
+    title = "首次设置" if setup else "登录到工作台"
+    button = "创建第一个用户名和密码" if setup else "登录"
+    confirm = ('<label>确认密码</label><input name="confirm" type="password" '
+               'autocomplete="new-password" required>') if setup else ""
+    alert = message or ("用户名或密码不正确" if wrong else "")
+    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Get Found By AI</title><style>
+*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+background:#FFF9F4;color:#1F2937;font:14px/1.5 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}}
+.wrap{{width:min(380px,100%)}}.brand{{font-size:24px;font-weight:600;margin-bottom:3px}}.brand span{{color:#EF6C1A}}
+.sub{{color:#6B7280;font-size:13px;margin-bottom:28px}}form{{background:#fff;border:1px solid #E7E5E4;
+padding:24px;border-radius:8px;box-shadow:0 10px 30px rgba(31,41,55,.08)}}h1{{font-size:18px;margin:0 0 18px}}
+label{{display:block;font-size:12px;color:#6B7280;margin:12px 0 5px}}input{{width:100%;height:40px;border:1px solid #D1D5DB;
+border-radius:7px;padding:0 11px;font:inherit}}input:focus{{outline:2px solid #FF8A3D;outline-offset:1px;border-color:#FF8A3D}}
+button{{width:100%;height:40px;margin-top:20px;border:1px solid #EF6C1A;border-radius:7px;background:#FF8A3D;
+color:#6B2C08;font-weight:600;cursor:pointer}}.err{{margin-top:12px;color:#DC2626;font-size:12px}}
+.hint{{margin-top:12px;color:#6B7280;font-size:12px}}</style></head><body><div class="wrap">
+<div class="brand">Get Found By <span>AI</span></div><div class="sub">AI 品牌可见度工作台</div>
+<form method="post" action="{action}"><h1>{title}</h1>
+<label>用户名</label><input name="username" autocomplete="username" minlength="3" maxlength="32" required autofocus>
+<label>密码</label><input name="password" type="password" autocomplete="{'new-password' if setup else 'current-password'}" minlength="8" required>
+{confirm}<button type="submit">{button}</button>{f'<div class="err">{alert}</div>' if alert else ''}
+{('<div class="hint">首次使用：此账号将拥有用户管理权限。</div>' if setup else '')}</form></div></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     TOKEN: str | None = None  # run() 注入；None = 不启用认证
     COOKIE_SECURE = False
+    user: dict | None = None
 
     def log_message(self, *a):  # 静音访问日志
         pass
@@ -299,50 +491,125 @@ class Handler(BaseHTTPRequestHandler):
         令牌只走两条不进访问日志的路：POST /__login 的请求体，或 X-Geolook-Token 头。
         ?token= 只为兼容旧链接保留，命中后立刻跳回干净地址。
         """
-        if not Handler.TOKEN:
-            return True
         u = urlparse(self.path)
         if self.command == "POST" and u.path == LOGIN_PATH:
             return self._do_login()
+        if self.command == "POST" and u.path == SETUP_PATH:
+            return self._do_setup()
+        if self.command == "POST" and u.path == LOGOUT_PATH:
+            return self._do_logout()
+        user = _session_user(self.headers.get("Cookie"))
+        if user:
+            self.user = user
+            return True
         qt = (parse_qs(u.query).get("token") or [None])[0]
-        if qt and hmac.compare_digest(qt, Handler.TOKEN):
+        if Handler.TOKEN and qt and hmac.compare_digest(qt, Handler.TOKEN):
             # 令牌换 cookie 后跳回干净地址，别让令牌留在地址栏和访问日志里。
             # 只对 GET 跳：POST 被 302 会退化成 GET，脚本调用会莫名失败。
             if self.command == "GET":
-                self._redirect_clean(u.path or "/")
+                self._redirect_token(u.path or "/")
                 return False
+            self.user = {"username": "api-token", "role": "admin", "active": True}
             return True
-        if auth_ok(Handler.TOKEN, self.headers.get("Cookie"),
-                   header_token=self.headers.get("X-Geolook-Token")):
+        if Handler.TOKEN and auth_ok(Handler.TOKEN, self.headers.get("Cookie"),
+                                     header_token=self.headers.get("X-Geolook-Token")):
+            self.user = {"username": "api-token", "role": "admin", "active": True}
             return True
         if self.command == "GET":
-            self._send(401, _login_html().encode("utf-8"), "text/html; charset=utf-8")
+            setup = not bool(_load_users())
+            self._send(401, _login_html(setup=setup).encode("utf-8"),
+                       "text/html; charset=utf-8")
         else:
-            self._json({"error": "未授权：需要 X-Geolook-Token 头或先在浏览器登录"}, 401)
+            self._json({"error": "未授权：请先登录"}, 401)
         return False
 
     def _do_login(self) -> bool:
-        """POST /__login：验令牌、种 cookie、跳首页。令牌始终待在请求体里。"""
+        """POST /__login：验用户名密码、种会话 cookie、跳首页。"""
         n = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(n).decode("utf-8", "replace") if n else ""
-        cand = (parse_qs(raw).get("token") or [""])[0]
-        if not (cand and hmac.compare_digest(cand, Handler.TOKEN)):
+        form = parse_qs(raw)
+        username = (form.get("username") or [""])[0]
+        password = (form.get("password") or [""])[0]
+        peer = self.client_address[0] if self.client_address else "unknown"
+        now = time.time()
+        attempts = [t for t in _LOGIN_ATTEMPTS.get(peer, []) if now - t < 300]
+        if len(attempts) >= 10:
+            self._send(429, _login_html(message="尝试次数过多，请 5 分钟后再试").encode("utf-8"),
+                       "text/html; charset=utf-8")
+            return False
+        user = authenticate_user(username, password)
+        if not user:
+            attempts.append(now)
+            _LOGIN_ATTEMPTS[peer] = attempts
             self._send(401, _login_html(wrong=True).encode("utf-8"),
                        "text/html; charset=utf-8")
             return False
-        self._redirect_clean("/")
+        _LOGIN_ATTEMPTS.pop(peer, None)
+        self._redirect_session("/", _new_session(user))
         return False
 
-    def _redirect_clean(self, location: str) -> None:
-        """种下 HttpOnly cookie 并跳到不含令牌的地址；反代为 HTTPS 时补 Secure。"""
-        secure = "; Secure" if (Handler.COOKIE_SECURE
-                                or self.headers.get("X-Forwarded-Proto") == "https") else ""
+    def _do_setup(self) -> bool:
+        """仅在用户库为空时允许创建首个管理员。"""
+        if _load_users():
+            self._send(409, _login_html(message="管理员已存在，请直接登录").encode("utf-8"),
+                       "text/html; charset=utf-8")
+            return False
+        n = int(self.headers.get("Content-Length", 0))
+        form = parse_qs(self.rfile.read(n).decode("utf-8", "replace") if n else "")
+        username = (form.get("username") or [""])[0]
+        password = (form.get("password") or [""])[0]
+        confirm = (form.get("confirm") or [""])[0]
+        try:
+            if password != confirm:
+                raise ValueError("两次输入的密码不一致")
+            user = create_user(username, password, "admin")
+        except ValueError as e:
+            self._send(400, _login_html(setup=True, message=str(e)).encode("utf-8"),
+                       "text/html; charset=utf-8")
+            return False
+        self._redirect_session("/", _new_session(user))
+        return False
+
+    def _do_logout(self) -> bool:
+        sid = _cookie(self.headers.get("Cookie"), SESSION_COOKIE)
+        with _AUTH_LOCK:
+            _SESSIONS.pop(sid, None)
+        secure = self._secure_cookie()
+        self.send_response(302)
+        self.send_header("Location", "/")
+        self.send_header("Set-Cookie", f"{SESSION_COOKIE}=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/{secure}")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return False
+
+    def _secure_cookie(self) -> str:
+        return "; Secure" if (Handler.COOKIE_SECURE
+                               or self.headers.get("X-Forwarded-Proto") == "https") else ""
+
+    def _redirect_session(self, location: str, sid: str) -> None:
+        secure = self._secure_cookie()
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Set-Cookie", f"{SESSION_COOKIE}={sid}; Max-Age={SESSION_TTL}; "
+                                       f"HttpOnly; SameSite=Strict; Path=/{secure}")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _redirect_token(self, location: str) -> None:
+        """旧 token 链接换兼容 cookie，然后跳到不含令牌的地址。"""
+        secure = self._secure_cookie()
         self.send_response(302)
         self.send_header("Location", location)
         self.send_header("Set-Cookie", f"{AUTH_COOKIE}={_token_digest(Handler.TOKEN)}; "
                                        f"HttpOnly; SameSite=Strict; Path=/{secure}")
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def _admin(self) -> bool:
+        if self.user and self.user.get("role") == "admin":
+            return True
+        self._json({"error": "仅管理员可执行此操作"}, 403)
+        return False
 
     def _send(self, code, body: bytes, ctype="application/json; charset=utf-8"):
         self.send_response(code)
@@ -374,6 +641,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p in ("/", "/index.html"):
                 return self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
+            if p == "/api/auth/me":
+                return self._json(self.user or {})
+            if p == "/api/users":
+                if not self._admin():
+                    return
+                return self._json(users_public())
             if p == "/api/projects":
                 return self._json(list_projects())
             if p == "/api/actions":
@@ -552,6 +825,31 @@ class Handler(BaseHTTPRequestHandler):
         p = unquote(urlparse(self.path).path)
         try:
             body = self._body()
+
+            if p == "/api/users":
+                if not self._admin():
+                    return
+                action = body.get("action") or "create"
+                username = str(body.get("username") or "").strip()
+                if action == "create":
+                    user = create_user(username, str(body.get("password") or ""),
+                                       str(body.get("role") or "user"))
+                    return self._json({"ok": True, "user": user})
+                if action == "reset-password":
+                    user = update_user(username, password=str(body.get("password") or ""))
+                    return self._json({"ok": True, "user": user})
+                if action == "set-active":
+                    if "active" not in body:
+                        return self._json({"ok": False, "error": "缺少 active"}, 400)
+                    if (self.user or {}).get("username", "").casefold() == username.casefold() \
+                            and not bool(body["active"]):
+                        return self._json({"ok": False, "error": "不能停用当前登录用户"}, 400)
+                    user = update_user(username, active=bool(body["active"]))
+                    return self._json({"ok": True, "user": user})
+                if action == "delete":
+                    delete_user(username, (self.user or {}).get("username", ""))
+                    return self._json({"ok": True})
+                return self._json({"ok": False, "error": f"未知操作：{action}"}, 400)
 
             if p == "/api/task":
                 missing = [k for k in ("slug", "id", "status") if k not in body]
@@ -823,14 +1121,14 @@ def run(port: int = 8765, open_browser: bool = True,
     if host not in ("127.0.0.1", "localhost") and not token:
         G.die(f"绑定到 {host} 会把看板暴露给网络上的所有人。"
               "先设置访问令牌再启动：export GEOLOOK_TOKEN=$(openssl rand -hex 16)")
+    ensure_bootstrap_user(token)
     Handler.TOKEN = token
     Handler.COOKIE_SECURE = _env_bool("GEOLOOK_COOKIE_SECURE", host not in ("127.0.0.1", "localhost"))
     J.reap_orphans()  # 回收上次服务留下的 running 僵尸记录，恢复并发保护
     threading.Thread(target=_monitor_loop, daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}/"
-    G.info(f"看板已启动：{url}（Ctrl+C 退出）"
-           + ("，访问需令牌（GEOLOOK_TOKEN）" if token else ""))
+    G.info(f"看板已启动：{url}（Ctrl+C 退出），访问需用户名和密码")
     if host not in ("127.0.0.1", "localhost"):
         G.info("经网络暴露：请用 Nginx 等反代做 HTTPS 终止并转发 X-Forwarded-Proto；"
                "令牌走登录表单或 X-Geolook-Token 头，不要放在 URL 里。")

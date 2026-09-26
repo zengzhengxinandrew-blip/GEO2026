@@ -1,4 +1,5 @@
 import json
+import tempfile
 import threading
 import unittest
 import urllib.request
@@ -34,6 +35,46 @@ class TestAuthOk(unittest.TestCase):
         self.assertFalse(D.auth_ok(self.TOKEN, f"{D.AUTH_COOKIE}=deadbeef"))
         # cookie 里放原始令牌不行——cookie 存的是摘要
         self.assertFalse(D.auth_ok(self.TOKEN, f"{D.AUTH_COOKIE}={self.TOKEN}"))
+
+
+class TestUsers(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = mock.patch.dict(D.os.environ, {
+            "GEOLOOK_USERS_FILE": str(Path(self.tmp.name) / "users.json")
+        })
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def test_create_and_authenticate_user(self):
+        made = D.create_user("admin", "correct-horse", "admin")
+        self.assertEqual(made["username"], "admin")
+        self.assertNotIn("password_hash", made)
+        self.assertEqual(D.authenticate_user("ADMIN", "correct-horse")["role"], "admin")
+        self.assertIsNone(D.authenticate_user("admin", "wrong-password"))
+        raw = json.loads(Path(D.os.environ["GEOLOOK_USERS_FILE"]).read_text("utf-8"))
+        self.assertNotIn("correct-horse", json.dumps(raw))
+
+    def test_duplicate_username_is_case_insensitive(self):
+        D.create_user("Alice", "long-password", "user")
+        with self.assertRaisesRegex(ValueError, "已存在"):
+            D.create_user("alice", "other-password", "user")
+
+    def test_last_admin_cannot_be_disabled(self):
+        D.create_user("admin", "long-password", "admin")
+        with self.assertRaisesRegex(ValueError, "最后一个管理员"):
+            D.update_user("admin", active=False)
+
+    def test_user_can_be_reset_and_disabled(self):
+        D.create_user("admin", "long-password", "admin")
+        D.create_user("member", "first-password", "user")
+        D.update_user("member", password="second-password", active=False)
+        self.assertIsNone(D.authenticate_user("member", "second-password"))
+        D.update_user("member", active=True)
+        self.assertIsNotNone(D.authenticate_user("member", "second-password"))
 
 
 class TestPublicBindGuard(unittest.TestCase):
