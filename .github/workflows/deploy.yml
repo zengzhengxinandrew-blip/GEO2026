@@ -59,11 +59,12 @@ jobs:
             echo "Created .env from .env.example. Set GEOLOOK_TOKEN before exposing the service."
           fi
 
-          if [ -n "${COMPOSE_PROFILES:-}" ]; then
-            docker compose --profile "$COMPOSE_PROFILES" up -d --build
-          else
-            docker compose up -d --build geolook
-          fi
+          # Always keep the https profile enabled so caddy stays under compose
+          # management. COMPOSE_PROFILES secret may override the profile list.
+          PROFILES="${COMPOSE_PROFILES:-https}"
+          echo "Using COMPOSE_PROFILES='$PROFILES' (source: ${COMPOSE_PROFILES:+secret}${COMPOSE_PROFILES:-default})"
+
+          docker compose --profile "$PROFILES" up -d --build
 
           docker compose ps
           docker compose logs --tail=80 geolook
