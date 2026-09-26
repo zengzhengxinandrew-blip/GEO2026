@@ -51,12 +51,68 @@ jobs:
           fi
 
           cd "$APP_DIR"
+
+          # 上次成功部署的版本，记录在项目目录之外，避免被 git 操作影响
+          STATE_FILE="${HOME:-/home/ubuntu}/.geolook_last_sha"
+
           git fetch origin "$BRANCH"
-          git reset --hard "origin/$BRANCH"
+          NEW_SHA=$(git rev-parse "origin/$BRANCH")
+
+          OLD_SHA=""
+          # 注意：不能用 `[ -f x ] && y=` 的写法——文件不存在时该语句返回非 0，
+          # 在 set -e 下会直接终止整个部署脚本
+          if [ -f "$STATE_FILE" ]; then
+            OLD_SHA=$(head -1 "$STATE_FILE")
+          fi
+          if [ -z "$OLD_SHA" ]; then
+            OLD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+          fi
+
+          echo "== Deploy $(git rev-parse --short "$OLD_SHA" 2>/dev/null || echo '?') -> $(git rev-parse --short "$NEW_SHA") =="
+
+          # 变更清单必须在 reset --hard 之前算：比的是两个 commit，不受工作区影响
+          if [ -n "$OLD_SHA" ] && git cat-file -e "$OLD_SHA^{commit}" 2>/dev/null; then
+            CHANGED=$(git diff --name-only "$OLD_SHA" "$NEW_SHA")
+          else
+            CHANGED="__ALL__"
+          fi
+
+          git reset --hard "$NEW_SHA"
 
           if [ ! -f .env ]; then
             cp .env.example .env
             echo "Created .env from .env.example. Set GEOLOOK_TOKEN before exposing the service."
+          fi
+
+          # --- 判定本次部署到底要做什么 ---
+          NEED_BUILD=no
+          NEED_CADDY_RELOAD=no
+
+          if [ "$CHANGED" = "__ALL__" ]; then
+            echo "Change scope: no previous deploy state -> full rebuild"
+            NEED_BUILD=yes
+          else
+            echo "Changed files:"
+            echo "$CHANGED" | sed 's/^/  - /'
+            for f in $CHANGED; do
+              case "$f" in
+                # 会改变镜像内容，必须重新构建
+                Dockerfile|requirements.txt|.dockerignore|scripts/*|references/*|SKILL.md)
+                  NEED_BUILD=yes ;;
+                # Caddy 配置：容器挂载读取，优雅重载即可，无需重建
+                deploy/caddy/Caddyfile)
+                  NEED_CADDY_RELOAD=yes ;;
+                # compose 配置：up -d 会应用，镜像本身不用重建
+                docker-compose.yml)
+                  ;;
+                # 文档 / 测试 / CI / 插件：不影响运行时
+                docs/*|tests/*|.github/*|*.md|LICENSE|.gitignore|extension/*)
+                  ;;
+                *)
+                  echo "  ! unclassified: $f -> rebuild to be safe"
+                  NEED_BUILD=yes ;;
+              esac
+            done
           fi
 
           # Always keep the https profile enabled so caddy stays under compose
@@ -64,8 +120,42 @@ jobs:
           PROFILES="${COMPOSE_PROFILES:-https}"
           echo "Using COMPOSE_PROFILES='$PROFILES' (source: ${COMPOSE_PROFILES:+secret}${COMPOSE_PROFILES:-default})"
 
-          docker compose --profile "$PROFILES" up -d --build
+          # 镜像缺失时（首次部署、被 prune 等）无条件构建
+          if [ "$NEED_BUILD" = no ] && [ -z "$(docker compose images -q geolook 2>/dev/null)" ]; then
+            echo "Runtime image missing -> build anyway"
+            NEED_BUILD=yes
+          fi
 
-          docker compose ps
-          docker compose logs --tail=80 geolook
+          if [ "$NEED_BUILD" = yes ]; then
+            echo "Action: rebuild image + recreate containers (brief restart expected)"
+            docker compose --profile "$PROFILES" up -d --build
+          else
+            echo "Action: no runtime change -> apply config only, NO rebuild (zero downtime)"
+            docker compose --profile "$PROFILES" config -q
+            docker compose --profile "$PROFILES" up -d --no-build
+          fi
+
+          # Caddyfile 变化：优雅重载，秒级完成且不中断现有连接
+          if [ "$NEED_CADDY_RELOAD" = yes ]; then
+            CID=$(docker compose --profile "$PROFILES" ps -q caddy 2>/dev/null || true)
+            if [ -n "$CID" ]; then
+              echo "Reloading caddy (Caddyfile changed)"
+              docker exec "$CID" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+            fi
+          fi
+
+          # 记录本次部署版本，供下次 diff
+          printf '%s\n' "$NEW_SHA" > "$STATE_FILE"
+
+          # 健康检查：确认程序真的恢复了
+          health=000
+          for i in $(seq 1 30); do
+            health=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8765/healthz || echo 000)
+            if [ "$health" = "200" ]; then break; fi
+            sleep 2
+          done
+          echo "healthz: $health (waited $((i * 2))s)"
+
+          docker compose --profile "$PROFILES" ps
+          docker compose logs --tail=40 geolook
           REMOTE

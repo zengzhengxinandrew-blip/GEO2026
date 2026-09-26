@@ -8,3 +8,20 @@ __pycache__
 .DS_Store
 docs/plans
 nohup.out
+
+# ---------------------------------------------------------------
+# 以下内容不参与镜像构建。目的有两个：
+# 1) 缩小构建上下文（docs 约 16MB，.git 约 24MB），加快构建
+# 2) 这些文件变化时不会让 `COPY . .` 层缓存失效，
+#    从而避免"改个 README 就重建镜像、重启容器"
+# 注意：scripts/ 与 references/ 是运行时必需，绝不能排除。
+# ---------------------------------------------------------------
+docs
+tests
+.github
+deploy
+extension
+*.md
+!SKILL.md
+LICENSE
+.gitignore
