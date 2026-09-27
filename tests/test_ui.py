@@ -37,6 +37,13 @@ class DocumentLangCase(unittest.TestCase):
         self.assertIn(".engine-key-row.configured", self.html)
         self.assertIn("'var(--success)'", self.html)
 
+    def test_pipeline_can_skip_crawl_and_restore_recent_jobs(self):
+        self.assertIn('id="run-skip-crawl"', self.html)
+        self.assertIn("runPipeline('autopilot')", self.html)
+        self.assertIn("runPipeline('serve')", self.html)
+        self.assertIn("RECENTJOBS=Array.isArray(jr.jobs)?jr.jobs:[]", self.html)
+        self.assertIn("最近任务", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

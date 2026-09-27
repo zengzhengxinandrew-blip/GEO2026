@@ -191,7 +191,7 @@ function progBar(p,f,w){ // 任务级 before/after：首测(f) → 当前(p) →
     <div style="font-size:11px;color:var(--t500)">${esc(p.label)}：首测 ${fmt(f&&f.cur)} → 当前 <b style="color:var(--t300)">${fmt(p.cur)}</b> · 目标 ${op}${fmt(p.target)}</div>
     <div class="bar" style="margin-top:3px;height:5px"><div style="height:100%;width:${Math.round(ratio*100)}%;background:${ratio>=1?'var(--a400)':'var(--accent)'};border-radius:4px"></div></div></div>`}
 const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
-let D=null,SLUG=null,R='overview',ACTIONS={},POLL=null,RUNNING=null,LASTJOB=null,LOGOFF=0,ME=null,USERS=null;
+let D=null,SLUG=null,R='overview',ACTIONS={},POLL=null,RUNNING=null,LASTJOB=null,RECENTJOBS=[],LOGOFF=0,ME=null,USERS=null;
 let ST={gapTab:'content',engSel:null,wq:null,obStep:1,obSlug:null,obNoSample:false,obFail:false,obUrl:'',obName:'',obMkt:'both'};
 
 function toast(m,k=''){const t=document.createElement('div');t.className='toast '+k;t.textContent=m;
@@ -1105,6 +1105,10 @@ async function runAction(a,params){
   if(!r.ok){toast(r.error||'启动失败','err');return null}
   RUNNING=r.job.id;LASTJOB=r.job.id;LOGOFF=0;renderSide();pollJob();
   toast('已启动：'+((ACTIONS[a]||{}).label||a));return r.job;
+}
+function runPipeline(a){
+  const skip=$('#run-skip-crawl');
+  return runAction(a,skip&&skip.checked?{'--skip-crawl':true}:{});
 }
 async function pollJob(){
   clearTimeout(POLL); if(!RUNNING)return;
@@ -2523,9 +2527,12 @@ async function vSettings(){
         <div><div style="font-size:15px;font-weight:500">运行任务</div>
           <div style="font-size:11.5px;color:var(--t600)">后台子进程执行，关掉页面也会跑完。同一项目同时只跑一个。</div></div>
         <div class="row" style="gap:6px">
-          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runAction('autopilot')">✦ 全自动引导</button>
-          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runAction('serve')">▶ 跑完整一期</button>
+          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('autopilot')">✦ 全自动引导</button>
+          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('serve')">▶ 跑完整一期</button>
         </div>
+        <label class="row" style="gap:6px;font-size:12px;color:var(--t500)">
+          <input type="checkbox" id="run-skip-crawl" style="width:auto"> 跳过重新抓站（优先使用旧快照；无旧快照但有问题库时继续 AI 采样）
+        </label>
         <div class="row" style="gap:6px">
           ${acts.map(x=>`<button class="btn btn-secondary" style="font-size:11.5px;padding:4px 9px" ${RUNNING?'disabled':''}
             onclick="runAction('${x}')">${esc((ACTIONS[x]||{}).label||x)}</button>`).join('')}
@@ -2538,6 +2545,9 @@ async function vSettings(){
         <div class="row"><div id="jobstat" style="font-size:12.5px;flex:1"></div>
           ${RUNNING?`<button class="btn btn-secondary" style="font-size:12px" onclick="stopJob()">停止任务</button>`:''}</div>
         <pre class="log" id="joblog" style="max-height:260px"></pre>
+        ${RECENTJOBS.length?`<details><summary style="font-size:12px;color:var(--t500);cursor:pointer">最近任务（${RECENTJOBS.length}）</summary>
+          <div style="display:flex;flex-direction:column;gap:4px;margin-top:7px">${RECENTJOBS.map(j=>`<button class="btn btn-ghost" style="font-size:11.5px;text-align:left;justify-content:flex-start" onclick="showLog(${esc(JSON.stringify(j.id))})">
+            ${j.status==='done'?'✓':j.status==='running'?'◐':'✗'} ${esc(j.label||j.action)} · ${esc(j.status)} · ${esc((j.started_at||'').slice(0,16).replace('T',' '))}</button>`).join('')}</div></details>`:''}
       </div>
     </div>
     <div class="row" style="margin-top:14px;font-size:12.5px;color:var(--t500)">
@@ -2582,6 +2592,7 @@ async function savePub(i){
 }
 async function stopJob(){if(RUNNING){await post(`/api/job/${RUNNING}/stop`,{});toast('已发送停止信号')}}
 async function showLog(id){
+  LASTJOB=id;
   const r=await api(`/api/job/${id}?offset=0`);const pre=$('#joblog'),st=$('#jobstat');
   if(pre&&!r.error){pre.textContent=r.log||'';pre.scrollTop=pre.scrollHeight;
     if(st)st.innerHTML=`${r.job.status==='done'?'✓':'✗'} ${esc(r.job.label)} ${({done:'完成',failed:'失败',stopped:'已停止',interrupted:'已中断'})[r.job.status]||r.job.status}`}
@@ -3076,7 +3087,10 @@ async function load(slug,keep){
     return}
   const f=await api('/api/files/'+slug);D.samples_sheets=f.samples||[];D.deliveries=f.deliveries||[];D.reports=f.reports||[];
   EXPD=await api('/api/expand/'+slug);if(!EXPD||EXPD.error||!EXPD.terms)EXPD=null;
-  const jr=await api('/api/jobs?slug='+slug);RUNNING=jr.running||null;
+  const jr=await api('/api/jobs?slug='+slug);
+  RECENTJOBS=Array.isArray(jr.jobs)?jr.jobs:[];
+  RUNNING=jr.running||null;
+  LASTJOB=RUNNING||(RECENTJOBS[0]&&RECENTJOBS[0].id)||null;
   AS.tree=null;   // 资产可能被任务更新过
   const hh=(location.hash||'').replace('#','');  // 支持 #路由 深链直达
   if(!keep)R=VIEWS[hh]?hh:((D.analytics&&D.analytics.latest_date)?'overview':'settings');

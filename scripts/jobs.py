@@ -45,14 +45,16 @@ ACTIONS: dict[str, dict] = {
                  "slow": True},
     "deliver":  {"label": "打包交付", "args": [], "desc": "客户交付包"},
     "sample-sheet": {"label": "导出人工采样表", "args": [], "desc": "无 API 平台用"},
-    "autopilot":{"label": "全自动引导", "args": ["--no-sample", "--limit", "--skip-llm"],
+    "autopilot":{"label": "全自动引导", "args": ["--no-sample", "--limit", "--skip-llm",
+                                                     "--skip-crawl"],
                  "desc": "推导底座 → 采样 → 工单 → 资产 → 三份交付物", "slow": True},
     "serve":    {"label": "跑完整周期", "args": ["--max-pages", "--limit", "--no-sample",
-                                                 "--draft", "--draft-limit"],
+                                                 "--draft", "--draft-limit", "--skip-crawl"],
                  "desc": "抓取→体检→采样→工单→资产→报告→验收→交付", "slow": True},
 }
 
-FLAG_ARGS = {"--no-recrawl", "--draft", "--no-sample", "--skip-llm", "--no-llm"}  # 布尔开关，无值
+FLAG_ARGS = {"--no-recrawl", "--draft", "--no-sample", "--skip-llm", "--no-llm",
+             "--skip-crawl"}  # 布尔开关，无值
 
 _lock = threading.Lock()
 _running: dict[str, str] = {}   # slug -> job_id

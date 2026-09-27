@@ -109,6 +109,11 @@ class JobsTest(unittest.TestCase):
         (J.JOBS_DIR / "badjob123456.json").write_text("{not json", "utf-8")
         self.assertIsNone(J.get("badjob123456"))
 
+    def test_long_pipelines_allow_skip_crawl(self):
+        self.assertIn("--skip-crawl", J.ACTIONS["autopilot"]["args"])
+        self.assertIn("--skip-crawl", J.ACTIONS["serve"]["args"])
+        self.assertIn("--skip-crawl", J.FLAG_ARGS)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -136,6 +136,53 @@ def cmd_deliverables(a):
     deliverables.run(a.slug)
 
 
+def _has_successful_evidence(slug: str) -> bool:
+    """是否有可安全复用的上一期抓取结果。失败尝试不会写进这个文件。"""
+    try:
+        pages = G.read_jsonl(G.project_dir(slug) / "evidence" / "pages.jsonl")
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return any(p.get("status") == 200 and p.get("text") for p in pages)
+
+
+def _has_previous_audit(slug: str) -> bool:
+    audit = G.read_json(G.project_dir(slug) / "audit.json", {}) or {}
+    return bool(audit.get("page_count") or audit.get("no_site"))
+
+
+def _crawl_for_pipeline(slug: str, crawler, *, max_pages: int | None = None,
+                        skip_crawl: bool = False) -> bool:
+    """为长流水线抓站，失败时按已有数据决定能否降级继续。
+
+    返回 True 表示有站点证据可供 audit/bootstrap 使用；False 表示没有站点证据，
+    但项目已有问题库，可以继续做 AI 答案采样与非站点交付物。
+    """
+    cfg = G.load_config(slug)
+    previous = _has_successful_evidence(slug)
+    questions = bool(cfg.get("questions"))
+
+    if skip_crawl:
+        if previous:
+            G.info("跳过重新抓站：使用上一期成功快照继续")
+            return True
+        if questions:
+            G.info("跳过重新抓站：没有旧快照，但已有问题库；将跳过站点体检并继续 AI 采样")
+            return False
+        G.die("--skip-crawl 需要上一期成功快照，或项目中已有问题库")
+
+    try:
+        crawler.run(slug, max_pages=max_pages)
+        return True
+    except SystemExit:
+        if previous:
+            G.info("本次抓站失败：已保留失败诊断，改用上一期成功快照继续")
+            return True
+        if questions:
+            G.info("本次抓站失败且没有旧快照，但已有问题库：跳过站点体检，继续 AI 采样")
+            return False
+        raise
+
+
 def cmd_new(a):
     """只给一个网址，跑完全流程出三份交付物。"""
     import audit as A
@@ -210,10 +257,18 @@ def cmd_autopilot(a):
 
     cfg = G.load_config(a.slug)
     G.info("═══ 1/8 抓取官网 ═══")
-    C.run(a.slug)
+    site_ready = _crawl_for_pipeline(a.slug, C, skip_crawl=a.skip_crawl)
     G.info("═══ 2/8 体检 ═══")
-    A.run(a.slug)
+    audit_ready = site_ready or _has_previous_audit(a.slug)
+    if site_ready:
+        A.run(a.slug)
+    elif audit_ready:
+        G.info("跳过重新体检：继续使用上一期 audit.json")
+    else:
+        G.info("跳过：没有可用站点快照")
     if not cfg.get("questions"):
+        if not site_ready:
+            G.die("项目没有问题库，也没有可用站点快照，无法自动推导底座")
         G.info("═══ 3/8 自动推导品牌事实、竞品与问题库 ═══")
         bootstrap.run(a.slug, skip_llm=a.skip_llm)
         A.run(a.slug)
@@ -227,6 +282,10 @@ def cmd_autopilot(a):
             S.run(a.slug, limit=a.limit)
         except Exception as e:  # noqa: BLE001
             G.info(f"采样跳过：{type(e).__name__}: {e}")
+    if not audit_ready:
+        G.info("本期已完成可执行的 AI 采样；因没有站点快照或旧体检，"
+               "工单、站点资产、报告和验收留待抓站恢复后生成")
+        return
     G.info("═══ 5/8 工单与建设蓝图 ═══")
     tasks.build(a.slug)
     BP.build(a.slug)
@@ -423,9 +482,16 @@ def cmd_serve(a):
     import verify as V
 
     G.info("═══ 1/7 抓取 ═══")
-    C.run(a.slug, max_pages=a.max_pages)
+    site_ready = _crawl_for_pipeline(a.slug, C, max_pages=a.max_pages,
+                                     skip_crawl=a.skip_crawl)
     G.info("═══ 2/7 体检 ═══")
-    A.run(a.slug)
+    audit_ready = site_ready or _has_previous_audit(a.slug)
+    if site_ready:
+        A.run(a.slug)
+    elif audit_ready:
+        G.info("跳过重新体检：继续使用上一期 audit.json")
+    else:
+        G.info("跳过：没有可用站点快照")
     G.info("═══ 3/7 AI 答案采样 ═══")
     if not G.load_config(a.slug).get("questions"):
         G.info("跳过：问题库为空（见 SKILL.md 步骤 2）")
@@ -436,6 +502,10 @@ def cmd_serve(a):
             S.run(a.slug, limit=a.limit)
         except Exception as e:  # noqa: BLE001
             G.info(f"采样跳过：{type(e).__name__}: {e}")
+    if not audit_ready:
+        G.info("本期已完成可执行的 AI 采样；因没有站点快照或旧体检，"
+               "工单、站点资产、报告和验收留待抓站恢复后生成")
+        return
     try:
         import expand
         expand.run(a.slug)
@@ -450,7 +520,10 @@ def cmd_serve(a):
     G.info("═══ 6/7 报告 ═══")
     Rp.run(a.slug)
     G.info("═══ 7/7 验收上期工单 ═══")
-    V.run(a.slug, recrawl=False)
+    if audit_ready:
+        V.run(a.slug, recrawl=False)
+    else:
+        G.info("跳过站点自动验收：本期没有可用站点快照")
     G.info("═══ 打包交付 ═══")
     deliver.run(a.slug)
 
@@ -510,6 +583,8 @@ def main():
     s.add_argument("--limit", type=int, default=None)
     s.add_argument("--no-sample", action="store_true", dest="no_sample")
     s.add_argument("--skip-llm", action="store_true", dest="skip_llm")
+    s.add_argument("--skip-crawl", action="store_true", dest="skip_crawl",
+                   help="不重新抓站；优先复用旧快照，无快照但有问题库时继续 AI 采样")
     s.set_defaults(func=cmd_autopilot)
 
     s = sub.add_parser("bootstrap", help="从官网正文自动推导品牌事实、竞品与问题库")
@@ -617,6 +692,8 @@ def main():
     s.add_argument("--max-pages", type=int, default=None, dest="max_pages")
     s.add_argument("--limit", type=int, default=None, help="采样只跑前 N 个问题")
     s.add_argument("--no-sample", action="store_true", dest="no_sample")
+    s.add_argument("--skip-crawl", action="store_true", dest="skip_crawl",
+                   help="不重新抓站；优先复用旧快照，无快照但有问题库时继续 AI 采样")
     s.add_argument("--draft", action="store_true", help="额外生成文章初稿")
     s.add_argument("--draft-limit", type=int, default=3, dest="draft_limit")
     s.set_defaults(func=cmd_serve)

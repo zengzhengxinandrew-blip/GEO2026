@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import fcntl
+import ipaddress
 import json
 import os
 import re
+import socket
 import sys
 import time
 from contextlib import contextmanager
@@ -177,6 +179,21 @@ def read_jsonl(path: Path):
 
 MAX_BYTES = 4_000_000  # 单页最多读 4MB，防止一头扎进安装包/大文件把管线拖死
 
+# 企业代理、HTTPS 检查网关或本机代理可能使用自己的根证书。requests 原生支持
+# REQUESTS_CA_BUNDLE；这里再提供一个更容易在 GeoLook .env 里解释的同义配置。
+# 空值永远不会退化成 verify=False——抓取器不能用“能抓到”为由关闭 TLS 校验。
+CA_BUNDLE = os.environ.get("GEOLOOK_CA_BUNDLE") or True
+
+# 这段地址常被代理软件用作 fake-IP 池。命中它不等于一定有问题，但若同时出现
+# 自签名证书，几乎可以确定是代理/流量接管，而不是目标网站漏发中间证书。
+FAKE_IP_NETS = (ipaddress.ip_network("198.18.0.0/15"),)
+
+TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
+WAF_CHALLENGE_MARKERS = (
+    b"/cdn-cgi/challenge-platform/", b"window._cf_chl_opt",
+    b"<title>just a moment", b"geetest_challenge", b"__cf_chl_",
+)
+
 # 一看就不是网页的路径，直接跳过（安装包、媒体、静态资源等）
 SKIP_EXT = re.compile(
     r"\.(zip|gz|tgz|bz2|7z|rar|dmg|pkg|exe|msi|apk|ipa|deb|rpm|bin|iso"
@@ -195,7 +212,40 @@ def is_fetchable(url: str) -> bool:
 
 
 
-def fetch(url: str, timeout: int = 12, retries: int = 1, ua: str | None = None) -> dict:
+def _retry_delay(response, attempt: int) -> float:
+    """优先尊重服务端 Retry-After，且给重试等待设上限，避免后台任务假死。"""
+    raw = (response.headers.get("Retry-After", "") if response is not None else "").strip()
+    try:
+        return max(0.5, min(12.0, float(raw))) if raw else min(6.0, 1.2 * (2 ** attempt))
+    except ValueError:
+        return min(6.0, 1.2 * (2 ** attempt))
+
+
+def _network_context(url: str) -> str:
+    """给 TLS/连接错误补充解析结果；只做诊断，不绕过证书或代理。"""
+    host = urlparse(url).hostname or ""
+    if not host:
+        return ""
+    try:
+        ips = sorted({x[4][0] for x in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)})
+    except OSError:
+        return ""
+    fake = []
+    for value in ips:
+        try:
+            ip = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if any(ip in net for net in FAKE_IP_NETS):
+            fake.append(value)
+    if fake:
+        return (f"；DNS 解析到代理常用 fake-IP {', '.join(fake)}。若浏览器能开而 Python 失败，"
+                "请检查代理分流/HTTPS 解密，或用 GEOLOOK_CA_BUNDLE 配置受信根证书")
+    return f"；DNS={', '.join(ips[:3])}" if ips else ""
+
+
+def fetch(url: str, timeout: int = 12, retries: int = 1, ua: str | None = None,
+          referer: str | None = None) -> dict:
     """返回 {url, final_url, status, html, x_robots_tag, elapsed, error}。只读网页，且有体积上限。
     ua 可换成 AI 爬虫的 User-Agent 做差异探测（WAF/CDN 是否单独拦 AI 爬虫）。"""
     if not is_fetchable(url):
@@ -209,21 +259,29 @@ def fetch(url: str, timeout: int = 12, retries: int = 1, ua: str | None = None) 
       for attempt in range(retries + 1):
         try:
             t0 = time.time()
-            headers = {"User-Agent": cur_ua, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
-            if ua_idx > 0:
-                headers["Accept"] = ("text/html,application/xhtml+xml,application/xml;"
-                                     "q=0.9,image/avif,image/webp,*/*;q=0.8")
+            headers = {
+                "User-Agent": cur_ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Accept-Encoding": "gzip, deflate",
+                "Cache-Control": "no-cache",
+                "Upgrade-Insecure-Requests": "1",
+            }
+            if referer:
+                headers["Referer"] = referer
             r = requests.get(
                 url,
                 timeout=timeout,
                 headers=headers,
                 allow_redirects=True,
                 stream=True,
+                verify=CA_BUNDLE,
             )
-            # 5xx / 429 多是临时故障（服务端抖动、限流），值得按异常同样的节奏重试
-            if (r.status_code >= 500 or r.status_code == 429) and attempt < retries:
+            # 限流、网关抖动和少量标准临时状态值得退避重试；Retry-After 优先。
+            if r.status_code in TRANSIENT_STATUS and attempt < retries:
+                wait = _retry_delay(r, attempt)
                 r.close()
-                time.sleep(1.5)
+                time.sleep(wait)
                 continue
             # 默认 UA 被拦（403/406 是 WAF 的典型手势）→ 跳出内层，换浏览器 UA
             if r.status_code in (403, 406) and ua_idx + 1 < len(ua_plan):
@@ -246,6 +304,16 @@ def fetch(url: str, timeout: int = 12, retries: int = 1, ua: str | None = None) 
                     break
             r.close()
             raw = b"".join(chunks)
+            low = raw[:60000].lower()
+            challenge = any(marker in low for marker in WAF_CHALLENGE_MARKERS)
+            if r.status_code == 200 and challenge:
+                last = "WAFChallenge: 返回的是浏览器验证页，不是官网正文"
+                if ua_idx + 1 < len(ua_plan):
+                    break
+                return {"url": url, "final_url": r.url, "status": 403, "html": "",
+                        "content_type": ctype, "x_robots_tag": xrobots,
+                        "elapsed": round(time.time() - t0, 2), "error": last,
+                        "ua_fallback": ua_idx > 0}
             enc = r.encoding if r.encoding and r.encoding.lower() != "iso-8859-1" else None
             if not enc:
                 m = re.search(rb'charset=["\']?([\w\-]+)', raw[:4000], re.I)
@@ -262,22 +330,19 @@ def fetch(url: str, timeout: int = 12, retries: int = 1, ua: str | None = None) 
                 "ua_fallback": ua_idx > 0,
             }
         except Exception as e:  # noqa: BLE001
-            last = f"{type(e).__name__}: {e}"
+            extra = _network_context(url) if isinstance(
+                e, (requests.exceptions.SSLError, requests.exceptions.ConnectionError)
+            ) else ""
+            last = f"{type(e).__name__}: {e}{extra}"
             if attempt < retries:
-                time.sleep(1.5)
+                time.sleep(_retry_delay(None, attempt))
     return {"url": url, "final_url": url, "status": 0, "html": "", "content_type": "",
             "x_robots_tag": "", "elapsed": 0, "error": last}
 
 
 def fetch_text(url: str, timeout: int = 8) -> str:
-    try:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": UA})
-        if r.status_code == 200:
-            r.encoding = r.apparent_encoding or r.encoding
-            return r.text
-    except Exception:  # noqa: BLE001
-        pass
-    return ""
+    res = fetch(url, timeout=timeout, retries=1)
+    return res["html"] if res["status"] == 200 else ""
 
 
 # ---------------------------------------------------------------- robots.txt

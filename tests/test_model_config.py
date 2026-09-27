@@ -103,7 +103,8 @@ class TestWriteEnv(unittest.TestCase):
     def test_roundtrip_set_and_delete(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            with mock.patch.object(DB.G, "ROOT", root):
+            with mock.patch.object(DB.G, "ROOT", root), \
+                 mock.patch.object(DB.G, "ENV_PATH", root / ".env"):
                 with mock.patch.dict(os.environ, {}, clear=False):
                     DB.write_env({"GLM_MODEL": "glm-test-1"})
                     self.assertEqual(os.environ.get("GLM_MODEL"), "glm-test-1")

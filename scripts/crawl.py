@@ -245,8 +245,14 @@ def _crawl_failure_hint(pages: list[dict]) -> str:
                      "Fight、宝塔/安全狗防火墙等）。把抓取机 IP 加白名单，或临时放行工具 UA。"
                      "注意：这套规则很可能同样拦住 AI 引擎的抓取器——这本身就是要修的 GEO 问题")
     elif "SSLError" in errors:
-        lines.append("→ TLS 证书链问题：浏览器会自动补中间证书，Python 不会。"
-                     "用 https://www.ssllabs.com/ssltest/ 检查并补齐中间证书（Chain issues）")
+        joined = " ".join(p.get("error") or "" for p in pages)
+        if "fake-IP" in joined or "self-signed certificate" in joined:
+            lines.append("→ TLS 被代理/安全网关接管：浏览器信任了本机证书，但 Python/容器不信任。"
+                         "检查代理 fake-IP/HTTPS 解密；需要保留解密时，把代理根证书挂进容器并设置 "
+                         "GEOLOOK_CA_BUNDLE。不要关闭证书校验")
+        else:
+            lines.append("→ TLS 证书校验失败：可能是目标站证书链不完整，也可能是代理 CA 未被容器信任。"
+                         "先用 SSL Labs 检查公网证书，再核对运行环境的代理与 CA")
     elif "ConnectionError" in errors or "ConnectTimeout" in errors or "ReadTimeout" in errors:
         lines.append("→ 网络层不通：确认抓取机能解析该域名（DNS）、目标站是否只对特定地区开放、"
                      "防火墙是否放行出站 443")
@@ -283,14 +289,16 @@ def run(slug: str, max_pages: int | None = None, delay: float = 0.5) -> dict:
     llms_txt = G.fetch_text(G.normalize_url(root, "/llms.txt"))
     sitemap_urls = discover_sitemap(root)
 
-    home = G.fetch(root)
+    # 首页是后续所有发现逻辑的入口，多给一轮退避重试；页面请求带首页 Referer，
+    # 可兼容要求正常站内导航来源的基础 WAF 规则。
+    home = G.fetch(root, retries=2)
     link_urls = discover_links(root, home["html"]) if home["html"] else []
 
     seeds = [u for u in cfg.get("pages", {}).get("seed", []) if u]
     candidates = rank(seeds + sitemap_urls + link_urls, root)[:limit]
 
     def crawl_one(i: int, u: str) -> dict:
-        res = home if u.rstrip("/") == root else G.fetch(u)
+        res = home if u.rstrip("/") == root else G.fetch(u, retries=2, referer=root)
         if res["status"] and res["html"]:
             (outdir / "html" / f"{i:03d}.html").write_text(res["html"], "utf-8")
         page = analyze_page(u, res)
@@ -353,10 +361,17 @@ def run(slug: str, max_pages: int | None = None, delay: float = 0.5) -> dict:
     if site["ua_fallback_pages"]:
         G.info(f"注意：{site['ua_fallback_pages']} 页是换纯浏览器 UA 才抓到的——"
                "WAF 在拦带工具标记的抓取，AI 引擎的爬虫很可能同样被拦，建议加白名单")
+    G.info(f"完成：{site['pages_ok']}/{len(pages)} 页可访问 → {outdir}")
+    try:
+        check_crawl_health(pages)
+    except SystemExit:
+        # 失败尝试单独留档，绝不覆盖上一期可用的 pages.jsonl/site.json。
+        # 自动引导才能安全地回退到旧快照继续执行。
+        G.write_json(outdir / "site.last-failed.json", site)
+        G.write_jsonl(outdir / "pages.last-failed.jsonl", pages)
+        raise
     G.write_json(outdir / "site.json", site)
     G.write_jsonl(outdir / "pages.jsonl", pages)
-    G.info(f"完成：{site['pages_ok']}/{len(pages)} 页可访问 → {outdir}")
-    check_crawl_health(pages)
     return site
 
 
