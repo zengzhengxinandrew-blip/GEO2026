@@ -127,7 +127,7 @@ def check(task: dict, audit: dict, metrics: dict) -> tuple[bool | None, str, dic
             n = site.get("sitemap_noisy_urls")
             if n is None:
                 return None, "本次重抓没有 sitemap 污染统计（旧版抓取结果），先重跑 crawl", None
-            return n == 0, (f"sitemap 已无低价值 URL" if n == 0
+            return n == 0, ("sitemap 已无低价值 URL" if n == 0
                             else f"仍有 {n} 条带参数/搜索/翻页 URL"), \
                 {"label": "sitemap 低价值 URL", "cur": n, "target": 0, "op": "lte"}
         if expr.startswith("site.hreflang_gte:"):

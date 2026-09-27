@@ -16,8 +16,6 @@
 from __future__ import annotations
 
 import csv
-import html
-import json
 import shutil
 from pathlib import Path
 
@@ -82,7 +80,7 @@ def _overview_md(cfg, audit, metrics, data, verify_report, notes=None) -> str:
           f"- 优先级：P0 {s.get('by_priority', {}).get('P0', 0)}（{PRI_NOTE['P0']}）／"
           f"P1 {s.get('by_priority', {}).get('P1', 0)}（{PRI_NOTE['P1']}）／"
           f"P2 {s.get('by_priority', {}).get('P2', 0)}（{PRI_NOTE['P2']}）",
-          f"- 进度：" + "、".join(f"{STATUS_CN[k]} {v}" for k, v in s.get("by_status", {}).items() if v),
+          "- 进度：" + "、".join(f"{STATUS_CN[k]} {v}" for k, v in s.get("by_status", {}).items() if v),
           ""]
     if s.get("by_package"):
         L += ["按工作包分布：", ""]

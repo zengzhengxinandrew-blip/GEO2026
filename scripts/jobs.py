@@ -45,12 +45,12 @@ ACTIONS: dict[str, dict] = {
                  "slow": True},
     "deliver":  {"label": "打包交付", "args": [], "desc": "客户交付包"},
     "sample-sheet": {"label": "导出人工采样表", "args": [], "desc": "无 API 平台用"},
-    "autopilot":{"label": "全自动引导", "args": ["--no-sample", "--limit", "--skip-llm",
+    "autopilot":{"label": "建立项目底座", "args": ["--no-sample", "--limit", "--skip-llm",
                                                      "--skip-crawl"],
-                 "desc": "推导底座 → 采样 → 工单 → 资产 → 三份交付物", "slow": True},
-    "serve":    {"label": "跑完整周期", "args": ["--max-pages", "--limit", "--no-sample",
+                 "desc": "首次建立事实、问题库、工单、资产与交付物", "slow": True},
+    "serve":    {"label": "更新本期数据", "args": ["--max-pages", "--limit", "--no-sample",
                                                  "--draft", "--draft-limit", "--skip-crawl"],
-                 "desc": "抓取→体检→采样→工单→资产→报告→验收→交付", "slow": True},
+                 "desc": "按本期重抓、体检、采样、报告、验收并交付", "slow": True},
 }
 
 FLAG_ARGS = {"--no-recrawl", "--draft", "--no-sample", "--skip-llm", "--no-llm",

@@ -396,7 +396,7 @@ def _entity_hit(text: str, aliases: list[str]) -> tuple[int, bool]:
     """返回 (首个有效命中位置, 是否有命中因否定语境被丢弃待人工确认)。"""
     hits = sorted((s, e) for a in aliases if a for s, e in _alias_spans(text, a))
     valid, negated = [], False
-    for s, e in hits:
+    for s, _ in hits:
         if _NEG_RE.search(_sentence_at(text, s)):
             negated = True  # 「不是 X」里的命中不算提及，但要人工确认
         else:

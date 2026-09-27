@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import blueprint as BP
 import geolib as G
 import report as R
 import tasks as T

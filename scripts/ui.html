@@ -228,7 +228,7 @@ const UI_D={en:{
 '诊断 · 为什么是这样':'DIAGNOSIS · WHY','站点体检':'Site Audit','差距诊断':'Gap Diagnosis','阵地地图':'Channel Map','品牌事实库':'Brand Facts',
 '提升 · 该做什么':'ACTION · WHAT TO DO','行动计划':'Action Plan','内容工作台':'Workbench','部署资产':'Assets',
 '成效 · 做了有没有用':'RESULTS · DID IT WORK','效果验收':'Verification','报告与交付':'Reports & Delivery','账号':'ACCOUNT','设置':'Settings',
-'采样为手动触发或由 schedule 驱动':'Sampling is manual or schedule-driven','▶ 跑完整一期':'▶ Run full cycle',
+'采样为手动触发或由 schedule 驱动':'Sampling is manual or schedule-driven','▶ 更新本期数据':'▶ Update this cycle',
 '保存':'Save','取消':'Cancel','关闭':'Close','配置':'Configure','修改':'Edit','详情':'Details','刷新':'Refresh','进入':'Open','打开':'Open',
 '写内容':'Write','生成':'Generate','复制':'Copy','保存修改':'Save changes','返回设置':'Back to Settings','去设置':'Go to Settings',
 '去配置':'Configure','去配置 Key →':'Configure keys →','知道了':'Got it','重试':'Retry','删':'Del','停止任务':'Stop job','自动验收':'Auto-verify',
@@ -277,7 +277,7 @@ const UI_D={en:{
 '品牌与项目':'Brands & projects','域名':'Domain','站点体检均分':'Audit avg','引擎与密钥':'Engines & keys','运行任务':'Run jobs','周期复跑':'Scheduled re-run','关':'Off',
 '点「配置」填 Key 和模型，写入项目根目录 .env，立即生效。无 API 的引擎走人工采样表。':'Click Configure to set keys & models (written to local .env, effective immediately). Engines without APIs use manual sheets.',
 '后台子进程执行，关掉页面也会跑完。同一项目同时只跑一个。':'Jobs run as background subprocesses. One at a time per project.',
-'✦ 全自动引导':'✦ Auto-bootstrap','▶ 跑完整一期':'▶ Run full cycle','发布渠道':'Publishing channels','已就绪':'Ready','人工采样':'Manual','已配置':'Configured',
+'✦ 建立项目底座':'✦ Build project baseline','▶ 更新本期数据':'▶ Update this cycle','发布渠道':'Publishing channels','已就绪':'Ready','人工采样':'Manual','已配置':'Configured',
 '最近发布：':'Recent publishes:','发布到渠道':'Publish to channel','发布':'Publish','渠道配置':'Channel config','该文件的发布记录':'Publish history for this file',
 '选一个问题，就地开写':'Pick a question, write right here','换一题 →':'Switch question →','选择一个问题':'Pick a question','搜问题…':'Search…',
 '分发清单 · 这篇该铺到哪':'DISTRIBUTION · WHERE THIS GOES','这条任务要解决':'THIS TASK ANSWERS','必须包含的抽取块（实测增益）':'REQUIRED BLOCKS (MEASURED LIFT)',
@@ -1091,7 +1091,7 @@ function renderSide(){
     采样为手动触发或由 schedule 驱动
     <div style="margin-top:8px">${RUNNING
       ?`<span class="spin"></span>任务运行中`
-      :`<button class="btn btn-ghost" style="font-size:12px;padding:2px 4px" onclick="runAction('serve')">▶ 跑完整一期</button>`}</div>
+      :`<button class="btn btn-ghost" style="font-size:12px;padding:2px 4px" onclick="runAction('serve')">▶ 更新本期数据</button>`}</div>
     <div class="row" style="margin-top:9px;padding-top:8px;box-shadow:inset 0 1px 0 var(--line);gap:5px">
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc((ME&&ME.username)||'')}">${esc((ME&&ME.username)||'用户')}</span>
       <form method="post" action="/__logout"><button class="btn btn-ghost" style="font-size:11px;padding:2px 4px" type="submit">退出</button></form>
@@ -1376,7 +1376,7 @@ function vCompetitors(){
   const paneMarket=`
     ${tbl(T.cn||[],NS.cn||0,'国内市场')}${gapCard('cn','国内')}
     ${tbl(T.global||[],NS.global||0,'海外市场')}${gapCard('global','海外')}
-    ${!flat.length?'<div class="muted" style="margin-top:22px">暂无竞品数据——先到「设置」配置竞品并跑完整一期。</div>':''}`;
+    ${!flat.length?'<div class="muted" style="margin-top:22px">暂无竞品数据——先到「设置」配置竞品并更新本期数据。</div>':''}`;
   const paneBattle=`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px">
       <div class="card elev" style="padding:18px">
@@ -2527,8 +2527,8 @@ async function vSettings(){
         <div><div style="font-size:15px;font-weight:500">运行任务</div>
           <div style="font-size:11.5px;color:var(--t600)">后台子进程执行，关掉页面也会跑完。同一项目同时只跑一个。</div></div>
         <div class="row" style="gap:6px">
-          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('autopilot')">✦ 全自动引导</button>
-          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('serve')">▶ 跑完整一期</button>
+          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('autopilot')">✦ 建立项目底座</button>
+          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('serve')">▶ 更新本期数据</button>
         </div>
         <label class="row" style="gap:6px;font-size:12px;color:var(--t500)">
           <input type="checkbox" id="run-skip-crawl" style="width:auto"> 跳过重新抓站（优先使用旧快照；无旧快照但有问题库时继续 AI 采样）
@@ -2540,7 +2540,7 @@ async function vSettings(){
         <div class="row" style="gap:6px;align-items:center;padding-top:4px;box-shadow:inset 0 1px 0 var(--line)">
           <span style="font-size:12px;color:var(--t500)">周期复跑</span>
           ${[0,7,14,30].map(dd=>`<button class="btn ${monCur===dd?'btn-secondary':'btn-ghost'}" style="font-size:11.5px;padding:3px 9px" onclick="setMonitor(${dd})">${dd?('每 '+dd+' 天'):'关'}</button>`).join('')}
-          ${monCur?`<span class="muted" style="font-size:11.5px">下次 ${esc(mon.next_run||'')} · 到期后看板运行时自动跑完整一期</span>`:''}
+          ${monCur?`<span class="muted" style="font-size:11.5px">下次 ${esc(mon.next_run||'')} · 到期后看板运行时自动更新本期数据</span>`:''}
         </div>
         <div class="row"><div id="jobstat" style="font-size:12.5px;flex:1"></div>
           ${RUNNING?`<button class="btn btn-secondary" style="font-size:12px" onclick="stopJob()">停止任务</button>`:''}</div>
@@ -2600,7 +2600,7 @@ async function showLog(id){
 async function setMonitor(days){
   const next=days?new Date(Date.now()+days*864e5).toISOString().slice(0,10):null;
   const r=await post('/api/config/'+SLUG,{monitor:days?{every_days:days,next_run:next}:{}});
-  toast(r.ok?(days?`已开启：每 ${days} 天自动跑完整一期，首次 ${next}`:'已关闭周期复跑'):'失败：'+(r.error||''),r.ok?'':'err');
+  toast(r.ok?(days?`已开启：每 ${days} 天自动更新本期数据，首次 ${next}`:'已关闭周期复跑'):'失败：'+(r.error||''),r.ok?'':'err');
   if(r.ok){SET_CFG=null;render()}
 }
 async function switchModal(){

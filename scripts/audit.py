@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from urllib.parse import urlparse
 
 import geolib as G
@@ -289,7 +288,9 @@ def run(slug: str) -> dict:
     # 均分分母只计能打开的页（含 0 分页）：和 grade_distribution 同口径，
     # 抓不到的页本来就不该参与内容质量均分
     ok = [r for r, p in zip(results, pages) if (p.get("status") or 0) == 200]
-    avg = round(sum(r["score"] for r in ok) / max(len(ok), 1), 1)
+    if not ok:
+        G.die("抓取快照中没有可评分的 200 页面；健康分保持数据不足，请先恢复抓取")
+    avg = round(sum(r["score"] for r in ok) / len(ok), 1)
 
     # 语言覆盖：做双市场时，「有没有英文原生内容」是海外 GEO 的门票
     market = cfg.get("market", "cn")

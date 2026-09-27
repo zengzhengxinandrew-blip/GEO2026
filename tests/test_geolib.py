@@ -1,4 +1,4 @@
-import json, tempfile, unittest
+import tempfile, unittest
 from pathlib import Path
 import sys; sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import geolib as G

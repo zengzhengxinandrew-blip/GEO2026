@@ -117,7 +117,7 @@ def cmd_init(a):
 
     print(f"[geo] 项目已创建：{G.project_dir(slug)/'geo.json'}（品牌：{name}）")
     if no_site:
-        print(f"[geo] 无站点模式：抓取/体检/站内资产不适用，其余流程照常")
+        print("[geo] 无站点模式：抓取/体检/站内资产不适用，其余流程照常")
         print(f"[geo] 下一步：填写 {mat_path} 后跑 bootstrap")
     else:
         print("[geo] 下一步：让 Claude 补全 brand/competitors/questions，再跑 crawl")
@@ -457,7 +457,6 @@ def cmd_status(a):
     if not data.get("tasks"):
         print("  还没有工单，运行 plan 生成\n")
         return
-    order = {"P0": 0, "P1": 1, "P2": 2}
     for pri in ("P0", "P1", "P2"):
         rows = [t for t in data["tasks"] if t["priority"] == pri]
         if not rows:

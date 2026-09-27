@@ -8,12 +8,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import geolib as G
 
@@ -25,12 +25,47 @@ PRIORITY = [
 ]
 
 
-def discover_sitemap(root: str, limit: int = 300) -> list[str]:
+def entrypoint_candidates(root: str) -> list[str]:
+    """只在同一域名的 www / 非 www 之间切换，不降级 HTTP、不跨站。"""
+    root = root.rstrip("/")
+    parts = urlparse(root)
+    host = parts.hostname or ""
+    if not host:
+        return [root]
+    try:
+        ipaddress.ip_address(host)
+        return [root]
+    except ValueError:
+        pass
+    if host == "localhost" or "." not in host:
+        return [root]
+    alt_host = host[4:] if host.startswith("www.") else "www." + host
+    port = f":{parts.port}" if parts.port else ""
+    alt = urlunparse((parts.scheme, alt_host + port, parts.path, "", parts.query, ""))
+    return list(dict.fromkeys([root, alt.rstrip("/")]))
+
+
+def filter_robots(urls: list[str], robots_txt: str) -> tuple[list[str], list[dict]]:
+    """客户站只抓 robots.txt 允许 GeoLookBot 访问的公开 URL。"""
+    groups = G.robots_parse(robots_txt)
+    allowed, skipped = [], []
+    for url in urls:
+        path = urlparse(url).path or "/"
+        ok, rule = G.robots_decision(groups, "GeoLookBot", path)
+        if ok:
+            allowed.append(url)
+        else:
+            skipped.append({"url": url, "rule": rule})
+    return allowed, skipped
+
+
+def discover_sitemap(root: str, limit: int = 300, robots_txt: str | None = None) -> list[str]:
     urls: list[str] = []
     seen_maps = set()
     queue = [G.normalize_url(root, "/sitemap.xml"), G.normalize_url(root, "/sitemap_index.xml")]
 
-    robots = G.fetch_text(G.normalize_url(root, "/robots.txt"))
+    robots = (G.fetch_text(G.normalize_url(root, "/robots.txt"))
+              if robots_txt is None else robots_txt)
     for m in re.findall(r"(?im)^\s*sitemap:\s*(\S+)", robots):
         queue.append(m.strip())
 
@@ -114,6 +149,8 @@ def analyze_page(url: str, res: dict) -> dict:
         "final_url": res["final_url"],
         "status": res["status"],
         "ua_fallback": res.get("ua_fallback", False),
+        "browser_fallback": res.get("browser_fallback", False),
+        "fetch_transport": res.get("fetch_transport", "requests"),
         "error": res["error"],
         "title": (soup.title.get_text(" ", strip=True) if soup.title else ""),
         "meta_description": (desc.get("content", "") if desc else ""),
@@ -246,7 +283,10 @@ def _crawl_failure_hint(pages: list[dict]) -> str:
                      "注意：这套规则很可能同样拦住 AI 引擎的抓取器——这本身就是要修的 GEO 问题")
     elif "SSLError" in errors:
         joined = " ".join(p.get("error") or "" for p in pages)
-        if "fake-IP" in joined or "self-signed certificate" in joined:
+        if "does not match target hostname" in joined or "hostname mismatch" in joined:
+            lines.append("→ 代理/fake-IP 返回了域名不匹配的证书；导入根证书也无法修复主机名错误。"
+                         "请在 GEOLOOK 服务器的代理规则中把该客户域名设为直连，或关闭 fake-IP/HTTPS 解密")
+        elif "fake-IP" in joined or "self-signed certificate" in joined:
             lines.append("→ TLS 被代理/安全网关接管：浏览器信任了本机证书，但 Python/容器不信任。"
                          "检查代理 fake-IP/HTTPS 解密；需要保留解密时，把代理根证书挂进容器并设置 "
                          "GEOLOOK_CA_BUNDLE。不要关闭证书校验")
@@ -265,7 +305,7 @@ def check_crawl_health(pages: list[dict]):
     """抓取全灭（目标站挂掉/被 WAF 拦）时直接终止流水线：
     失败页 status=0 照样进均分，会产出「均分 3 分」的误导报告。"""
     if not pages:
-        return
+        G.die("抓取失败：没有 robots.txt 允许且可供体检的公开页面")
     ok = sum(1 for p in pages if p["status"] == 200)
     if ok == 0:
         G.die("抓取失败：没有页面返回 200。\n" + _crawl_failure_hint(pages))
@@ -273,32 +313,89 @@ def check_crawl_health(pages: list[dict]):
         G.die(f"抓取失败：仅 {ok}/{len(pages)} 页可访问（<20%）。\n" + _crawl_failure_hint(pages))
 
 
+def _finish_crawl(outdir, site: dict, pages: list[dict]) -> dict:
+    """统一收口成功/失败写盘，失败结果永远不覆盖上一期成功快照。"""
+    site["pages_crawled"] = len(pages)
+    site["pages_ok"] = sum(1 for p in pages if p.get("status") == 200)
+    site["ua_fallback_pages"] = sum(1 for p in pages if p.get("ua_fallback"))
+    site["browser_fallback_pages"] = sum(1 for p in pages if p.get("browser_fallback"))
+    site["fetch_transports"] = sorted({p.get("fetch_transport", "requests") for p in pages})
+    if site["browser_fallback_pages"]:
+        G.info(f"注意：{site['browser_fallback_pages']} 页使用了浏览器 TLS/HTTP2 指纹回退；"
+               "它不执行 JavaScript，也不会绕过登录或验证码")
+    elif site["ua_fallback_pages"]:
+        G.info(f"注意：{site['ua_fallback_pages']} 页是换纯浏览器 UA 才抓到的——"
+               "WAF 在拦工具标记，AI 引擎的抓取器也可能受影响")
+    G.info(f"完成：{site['pages_ok']}/{len(pages)} 页可访问 → {outdir}")
+    try:
+        check_crawl_health(pages)
+    except SystemExit:
+        G.write_json(outdir / "site.last-failed.json", site)
+        G.write_jsonl(outdir / "pages.last-failed.jsonl", pages)
+        raise
+    G.write_json(outdir / "site.json", site)
+    G.write_jsonl(outdir / "pages.jsonl", pages)
+    return site
+
+
 def run(slug: str, max_pages: int | None = None, delay: float = 0.5) -> dict:
     cfg = G.load_config(slug)
     if not G.has_site(cfg):
         G.info("无自有网站项目：跳过抓取（采样、竞品、阵地、内容、验收不受影响）")
         return {"slug": slug, "no_site": True, "pages_crawled": 0, "pages_ok": 0}
-    root = cfg["brand"]["site"].rstrip("/")
+    configured_root = cfg["brand"]["site"].rstrip("/")
+    root = configured_root
     limit = max_pages or cfg.get("pages", {}).get("max", 25)
     outdir = G.project_dir(slug) / "evidence"
     (outdir / "html").mkdir(parents=True, exist_ok=True)
 
-    G.info(f"抓取 {root}（上限 {limit} 页）")
+    G.info(f"抓取 {configured_root}（上限 {limit} 页）")
 
+    # robots 是客户公开边界；先读取并判断首页，再进行任何正文抓取。
     robots_txt = G.fetch_text(G.normalize_url(root, "/robots.txt"))
-    llms_txt = G.fetch_text(G.normalize_url(root, "/llms.txt"))
-    sitemap_urls = discover_sitemap(root)
+    allowed_entrypoints, robots_skipped_entrypoints = filter_robots(
+        entrypoint_candidates(root), robots_txt,
+    )
+    if not allowed_entrypoints:
+        G.die("robots.txt 不允许 GeoLookBot 访问网站入口；作为客户公开站点，程序不会绕过该限制")
 
-    # 首页是后续所有发现逻辑的入口，多给一轮退避重试；页面请求带首页 Referer，
-    # 可兼容要求正常站内导航来源的基础 WAF 规则。
-    home = G.fetch(root, retries=2)
+    # 首页是后续发现入口。配置域名失败时只尝试同站的 www / 非 www 版本；
+    # 不降级 HTTP、不跨域，也不关闭证书校验。
+    attempts = []
+    home = None
+    home_url = allowed_entrypoints[0]
+    for candidate in allowed_entrypoints:
+        result = G.fetch(candidate, retries=2)
+        attempts.append((candidate, result))
+        if result.get("status") == 200 and result.get("html"):
+            home_url, home = candidate, result
+            break
+    if home is None:
+        pages = [analyze_page(url, result) for url, result in attempts]
+        failed_site = {
+            "slug": slug, "root": configured_root, "crawled_at": G.now_iso(),
+            "failure_stage": "entrypoint", "robots_skipped_urls": len(robots_skipped_entrypoints),
+        }
+        return _finish_crawl(outdir, failed_site, pages)
+
+    final = urlparse(home.get("final_url") or home_url)
+    root = urlunparse((final.scheme, final.netloc, "", "", "", "")).rstrip("/")
+    if home_url != configured_root or root != configured_root:
+        G.info(f"站点入口自动切换：{configured_root} → {home.get('final_url') or home_url}")
+
+    llms_txt = G.fetch_text(G.normalize_url(root, "/llms.txt"))
+    sitemap_urls = discover_sitemap(root, robots_txt=robots_txt)
     link_urls = discover_links(root, home["html"]) if home["html"] else []
 
     seeds = [u for u in cfg.get("pages", {}).get("seed", []) if u]
-    candidates = rank(seeds + sitemap_urls + link_urls, root)[:limit]
+    ranked = rank([home.get("final_url") or home_url] + seeds + sitemap_urls + link_urls, root)
+    candidates, robots_skipped = filter_robots(ranked, robots_txt)
+    candidates = candidates[:limit]
 
     def crawl_one(i: int, u: str) -> dict:
-        res = home if u.rstrip("/") == root else G.fetch(u, retries=2, referer=root)
+        home_aliases = {root.rstrip("/"), home_url.rstrip("/"),
+                        (home.get("final_url") or "").rstrip("/")}
+        res = home if u.rstrip("/") in home_aliases else G.fetch(u, retries=2, referer=root)
         if res["status"] and res["html"]:
             (outdir / "html" / f"{i:03d}.html").write_text(res["html"], "utf-8")
         page = analyze_page(u, res)
@@ -354,25 +451,10 @@ def run(slug: str, max_pages: int | None = None, delay: float = 0.5) -> dict:
         "ai_ua_probe": ua_probe,
         "ai_ua_blocked": ua_blocked,
         "llms_txt_check": llms_check,
-        "pages_crawled": len(pages),
-        "pages_ok": sum(1 for p in pages if p["status"] == 200),
-        "ua_fallback_pages": sum(1 for p in pages if p.get("ua_fallback")),
+        "robots_skipped_urls": len(robots_skipped),
+        "robots_skipped_examples": robots_skipped[:5],
     }
-    if site["ua_fallback_pages"]:
-        G.info(f"注意：{site['ua_fallback_pages']} 页是换纯浏览器 UA 才抓到的——"
-               "WAF 在拦带工具标记的抓取，AI 引擎的爬虫很可能同样被拦，建议加白名单")
-    G.info(f"完成：{site['pages_ok']}/{len(pages)} 页可访问 → {outdir}")
-    try:
-        check_crawl_health(pages)
-    except SystemExit:
-        # 失败尝试单独留档，绝不覆盖上一期可用的 pages.jsonl/site.json。
-        # 自动引导才能安全地回退到旧快照继续执行。
-        G.write_json(outdir / "site.last-failed.json", site)
-        G.write_jsonl(outdir / "pages.last-failed.jsonl", pages)
-        raise
-    G.write_json(outdir / "site.json", site)
-    G.write_jsonl(outdir / "pages.jsonl", pages)
-    return site
+    return _finish_crawl(outdir, site, pages)
 
 
 if __name__ == "__main__":

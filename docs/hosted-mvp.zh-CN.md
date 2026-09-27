@@ -135,7 +135,36 @@ docker compose --profile https up -d
 docker compose up -d --build geolook
 ```
 
-## 7. 安全边界
+## 7. 客户网站抓取与证书
+
+GEOLOOK 自己域名的 HTTPS 证书只保护“浏览器 → GEOLOOK”；抓客户公开网站时，
+使用的是另一条“GEOLOOK 容器 → 客户网站”连接。更换前者的证书不会修复后者。
+
+镜像会安装系统公共 CA，并在普通请求遇到 403/406 或浏览器验证页时，自动尝试一次
+浏览器 TLS/HTTP2 指纹回退。回退仍然校验证书，不执行 JavaScript，不绕过登录、验证码
+或 `robots.txt`。
+
+如果日志显示域名解析到了 `198.18.0.0/15` fake-IP，或 HTTPS 被企业代理/安全网关解密，
+应把该代理的 PEM 根证书放进持久化目录并在 `.env` 指向容器内路径：
+
+```bash
+mkdir -p data/certs
+cp /实际路径/proxy-root-ca.pem data/certs/proxy-root-ca.pem
+chmod 644 data/certs/proxy-root-ca.pem
+printf '\nGEOLOOK_CA_BUNDLE=/data/certs/proxy-root-ca.pem\n' >> .env
+docker compose up -d --build --force-recreate geolook
+```
+
+如果只有 DNS 被 fake-IP 改写、没有 HTTPS 解密，可选配置可信 DoH：
+
+```bash
+printf '\nGEOLOOK_DOH_URL=https://1.1.1.1/dns-query\n' >> .env
+docker compose up -d --force-recreate geolook
+```
+
+DoH 只解决 DNS，不会让不受信任的代理证书变可信。不要配置 `verify=False`。
+
+## 8. 安全边界
 
 - 公开访问必须设置 `GEOLOOK_TOKEN`
 - 正式域名访问必须使用 HTTPS，并设置 `GEOLOOK_COOKIE_SECURE=1`
@@ -143,7 +172,7 @@ docker compose up -d --build geolook
 - 当前版本是单租户服务，不要把同一个实例开放给彼此无关的客户共用
 - Chrome 采样助手仍默认面向本机 `127.0.0.1`，Hosted 域名支持放到后续阶段
 
-## 8. 健康检查
+## 9. 健康检查
 
 服务提供公开健康检查：
 

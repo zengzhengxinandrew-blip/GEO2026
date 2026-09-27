@@ -11,9 +11,7 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
-from pathlib import Path
 
 import geolib as G
 
@@ -74,7 +72,6 @@ def from_audit(audit: dict, cfg: dict, seq) -> list[dict]:
     site = audit.get("site", {})
     market = cfg.get("market", "cn")
     pages = audit.get("pages", [])
-    weak = [p["url"] for p in pages if p["score"] < 65]
 
     # —— 站点级 ——
     if site.get("ai_bots_blocked"):
@@ -167,7 +164,7 @@ def from_audit(audit: dict, cfg: dict, seq) -> list[dict]:
             out.append(_t(next(seq), "P1", "内容矩阵", f"补齐{thin}侧内容，中英对等",
                           f"中文 {zh} 页 / 英文 {en} 页严重不对等，{thin}侧是短板",
                           f"把{thin}侧页面数补到与另一侧相差 30% 以内", "内容", "L",
-                          {"type": "auto", "check": f"site.lang_balance:0.7",
+                          {"type": "auto", "check": "site.lang_balance:0.7",
                            "desc": "中英页面数差距 ≤ 70%"}))
 
     # —— 页面级：按缺口类型聚合成一条工单，而不是一页一条 ——
@@ -294,11 +291,6 @@ def from_metrics(metrics: dict, cfg: dict, seq) -> list[dict]:
                           "母品牌/关联站挂子产品入口", "市场", "M",
                           {"type": "auto", "check": f"metrics.own_cite_gte:{mk}:0.1",
                            "desc": f"{mk_name}引用官网率 ≥ 10%"}, market=mk))
-        # 品牌认知错误 → P0
-        for plat, m in rows.items():
-            pr = m.get("probe") or {}
-            if pr.get("samples") and (pr.get("own_domain_cite_rate") or 0) == 0:
-                continue
     return out
 
 

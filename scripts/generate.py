@@ -255,7 +255,6 @@ def gen_outlines(slug: str) -> list[dict]:
     for q in cfg.get("questions", []):
         typ = GROUP2TYPE.get(q.get("group", ""), "定义型")
         mk = q.get("market", cfg.get("market", "cn"))
-        topic = q["text"].rstrip("？?")
         alt = comps[0] if comps else ("竞品" if mk == "cn" else "alternatives")
         secs = [s.format(topic=b["name"], alt=alt) for s in OUTLINE_TMPL[typ]]
         out.append({
@@ -294,7 +293,6 @@ def draft(slug: str, outline: dict, provider: str | None = None) -> str:
     if not plat:
         return ""
     cfg = G.load_config(slug)
-    f = parse_facts(slug)
     b = cfg["brand"]
     zh = outline["market"] != "global"
     facts = "\n".join(f"- {x}" for x in outline["facts_to_use"]) or "（无结构化事实，只写通用内容，不要编造品牌数据）"

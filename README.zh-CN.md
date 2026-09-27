@@ -165,6 +165,11 @@ docker compose --profile https up -d
 
 可变数据会落在 `data/`，方便备份和升级。完整步骤见 [docs/hosted-mvp.zh-CN.md](docs/hosted-mvp.zh-CN.md)。
 
+抓客户网站与 GEOLOOK 自己的域名证书是两条独立连接。镜像内置公共 CA 与安全的浏览器
+TLS/HTTP2 指纹回退；代理 fake-IP/HTTPS 解密环境仍需把代理根证书挂到 `data/certs/`，
+并设置 `GEOLOOK_CA_BUNDLE=/data/certs/<证书文件>.pem`。程序不会关闭证书校验、绕过
+`robots.txt`、登录或验证码。详见部署文档的“客户网站抓取与证书”。
+
 ### 升级
 
 ```bash

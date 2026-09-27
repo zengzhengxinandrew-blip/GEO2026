@@ -41,6 +41,8 @@ class DocumentLangCase(unittest.TestCase):
         self.assertIn('id="run-skip-crawl"', self.html)
         self.assertIn("runPipeline('autopilot')", self.html)
         self.assertIn("runPipeline('serve')", self.html)
+        self.assertIn("建立项目底座", self.html)
+        self.assertIn("更新本期数据", self.html)
         self.assertIn("RECENTJOBS=Array.isArray(jr.jobs)?jr.jobs:[]", self.html)
         self.assertIn("最近任务", self.html)
 
