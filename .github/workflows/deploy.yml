@@ -52,6 +52,26 @@ jobs:
 
           cd "$APP_DIR"
 
+          # --- 归属自愈（先修再拉取）---
+          # 一旦有人以 root 在服务器上执行过 git 写入（例如通过云服务器「自动化助手」
+          # 下发脚本、或 sudo git commit），就会在 .git/objects 里留下 root 属主的对象，
+          # 之后 CI 以普通用户 fetch 会直接失败：
+          #   error: insufficient permission for adding an object to repository database .git/objects
+          # 这里在每次部署前幂等地修回来（只作用于 .git，不动 data 等业务目录）。
+          OWNER=$(stat -c '%u:%g' "$APP_DIR")
+          if find "$APP_DIR/.git" ! -uid "${OWNER%%:*}" -print -quit | grep -q .; then
+            echo "Found .git files not owned by uid ${OWNER%%:*} -> chown -R"
+            sudo -n chown -R "$OWNER" "$APP_DIR/.git" 2>/dev/null \
+              || chown -R "$OWNER" "$APP_DIR/.git"
+          fi
+          # 写权限预检：失败时给出可操作的提示，而不是让 git 用一句英文报错含糊带过
+          if ! touch "$APP_DIR/.git/objects/.ci-write-probe" 2>/dev/null; then
+            echo "ERROR: no write permission on $APP_DIR/.git/objects." >&2
+            echo "Fix on the server:  sudo chown -R \$(stat -c '%u:%g' $APP_DIR) $APP_DIR/.git" >&2
+            exit 1
+          fi
+          rm -f "$APP_DIR/.git/objects/.ci-write-probe"
+
           # 上次成功部署的版本，记录在项目目录之外，避免被 git 操作影响
           STATE_FILE="${HOME:-/home/ubuntu}/.geolook_last_sha"
 
