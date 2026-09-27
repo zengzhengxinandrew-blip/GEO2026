@@ -42,6 +42,7 @@ services:
       - "443:443"
     volumes:
       - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/certs:/etc/geolook-certs:ro
       - caddy_data:/data
       - caddy_config:/config
 
