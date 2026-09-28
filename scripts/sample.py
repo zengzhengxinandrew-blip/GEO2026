@@ -207,12 +207,31 @@ def pick_llm(prefer: str | None = None):
     return next((c for c in cands if c and available(c)), None)
 
 
+def _ark_speed_on() -> bool:
+    """豆包是否启用深度思考。默认关闭——实测同一问题 92.8s -> 32.4s，正文长度不受影响。
+
+    设 ARK_THINKING=on 可恢复深度思考（更慢、更耗 token）。
+    """
+    return os.environ.get("ARK_THINKING", "").strip().lower() in ("on", "1", "true", "enabled")
+
+
+def _ark_responses_opts() -> dict:
+    """Responses API 的提速参数（默认关思考）。"""
+    return {} if _ark_speed_on() else {"reasoning": {"effort": "minimal"}}
+
+
+def _ark_chat_opts() -> dict:
+    """Chat Completions 的提速参数（默认关思考）。"""
+    return {} if _ark_speed_on() else {"thinking": {"type": "disabled"}}
+
+
 def ask_ark(p: dict, key: str, question: str, timeout: int) -> dict:
     """火山方舟。优先用 Responses API + web_search；账号没开通内容插件就降级成普通对话。"""
     H = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     try:
         r = requests.post(f"{p['base']}/responses", headers=H,
                           json={"model": _p_model(p), "input": question,
+                                **_ark_responses_opts(),
                                 "tools": [{"type": "web_search"}]}, timeout=timeout)
         if r.status_code == 200:
             d = r.json()
@@ -239,7 +258,7 @@ def ask_ark(p: dict, key: str, question: str, timeout: int) -> dict:
 
     try:  # 降级：不联网的普通对话
         r = requests.post(f"{p['base']}/chat/completions", headers=H,
-                          json={"model": _p_model(p),
+                          json={"model": _p_model(p), **_ark_chat_opts(),
                                 "messages": [{"role": "user", "content": question}]}, timeout=timeout)
         if r.status_code != 200:
             return {"ok": False, "answer": "", "error": f"HTTP {r.status_code}: {r.text[:300]}"}
