@@ -41,7 +41,14 @@ def load_env(path: Path | None = None):
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+        k = k.strip()
+        v = v.strip().strip("'\"")
+        # 容器/compose 常把这些变量预置成空字符串（占位），而空字符串同样算
+        # 「已存在」，会挡住 .env 里真正保存的 Key —— 结果后台保存的凭据只在
+        # 当前进程内存里有效，重启或重新部署后即丢失。空值按「未设置」处理。
+        # 容器里真正有值的环境变量依然优先，命令行注入不受影响。
+        if not os.environ.get(k):
+            os.environ[k] = v
 
 
 load_env(ENV_PATH)
