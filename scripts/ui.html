@@ -2971,7 +2971,7 @@ function vSamples(){
       <th>问题</th><th style="width:74px">提及</th><th style="width:56px">位次</th>
       <th style="width:150px">竞品</th><th style="width:64px">引用</th><th style="width:96px">标记</th><th style="width:60px"></th>
     </tr></thead><tbody>
-      ${rows.map(r=>`<tr ${r.needs_review?'style="background:rgba(255,138,61,.08)"':''}>
+      ${rows.map((r,i)=>`<tr ${r.needs_review?'style="background:rgba(255,138,61,.08)"':''}>
         <td style="font-size:12px;color:var(--t500)">${esc(r.date)}</td>
         <td style="font-size:12.5px">${esc(r.platform_name||r.platform)}</td>
         <td style="font-size:11px;color:var(--t600)" title="${esc((r.evidence_level||'')+(r.session_label?' · '+r.session_label:''))}">${({api:'API',manual:'手工',extension:'插件'})[r.sample_mode]||esc(r.sample_mode||'')}${r.session_mode&&r.session_mode!=='incognito'?`<div style="font-size:9.5px;color:${r.session_mode==='personal'?'var(--accent)':'var(--t700)'}">${r.session_mode==='personal'?'个人号':'专用号'}</div>`:''}</td>
@@ -2983,15 +2983,27 @@ function vSamples(){
         <td style="font-size:11px">
           ${r.needs_review?`<span class="tag tag-accent" title="${esc((r.negative_cues||[]).join('、')||'判读存疑')}">待复核</span>`:''}
           ${r.manual_override?'<span class="tag tag-dim">人工</span>':''}</td>
-        <td><button class="btn btn-ghost" style="font-size:11.5px;padding:2px 7px" onclick="sampleModal(${esc(JSON.stringify(r.key))})">查看</button></td>
+        <td><button type="button" class="btn btn-ghost" style="font-size:11.5px;padding:2px 7px" onclick="openSampleRow(${i})">查看</button></td>
       </tr>`).join('')||'<tr><td colspan="10" class="muted" style="padding:16px">没有符合条件的样本</td></tr>'}
     </tbody></table></div>
   </div>`;
 }
+function openSampleRow(i){
+  // 不把完整 key 拼进内联 JavaScript：旧样本的题号可能含引号、换行等字符，
+  // 经过 HTML 实体解码后会破坏 onclick，表现为只有某些引擎的“查看”点不动。
+  const row=SMP&&Array.isArray(SMP.rows)?SMP.rows[i]:null;
+  if(!row||!row.key){toast('读取失败：样本标识缺失','err');return}
+  sampleModal(row.key);
+}
 async function sampleModal(key){
   const r=await api(`/api/sample/${SLUG}?key=${encodeURIComponent(key)}`);
-  if(!r||r.error){toast('读取失败','err');return}
-  const a=r.analysis||{},cites=r.citations||[];
+  if(!r||r.error){toast('读取失败：'+((r&&r.error)||'服务未响应'),'err');return}
+  const a=r.analysis&&typeof r.analysis==='object'?r.analysis:{};
+  // 兼容早期样本：引用曾可能保存成 URL 字符串，个别失败记录也可能夹有 null。
+  const cites=(Array.isArray(r.citations)?r.citations:[]).map(c=>
+    typeof c==='string'?{url:c,title:''}:c
+  ).filter(c=>c&&typeof c.url==='string'&&c.url);
+  const answer=typeof r.answer==='string'?r.answer:String(r.answer??'');
   modal(`<h4 style="font-size:16px">${esc(r.question||'')}</h4>
     <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap">
       <span class="tag tag-outline">${esc(r.platform_name||r.platform)}</span>
@@ -2999,9 +3011,9 @@ async function sampleModal(key){
       <span class="tag tag-dim">${esc(r.evidence_level||'')}</span>
       ${r.session_label?`<span class="tag tag-outline" title="采样环境——不同环境的样本不该混在一起算平均">${esc(r.session_label)}</span>`:''}
       ${r.manual_override?'<span class="tag tag-accent">已人工核对</span>':''}
-      <span style="font-size:11.5px;color:var(--t600)">${esc(r.terminal||'')} · ${esc(r.sample_mode||'')} · ${(r.answer||'').length} 字</span></div>
+      <span style="font-size:11.5px;color:var(--t600)">${esc(r.terminal||'')} · ${esc(r.sample_mode||'')} · ${answer.length} 字</span></div>
     <div style="font-size:12px;color:var(--t600);margin:12px 0 3px">答案原文</div>
-    <div style="max-height:210px;overflow:auto;background:var(--deep);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.65;white-space:pre-wrap;color:var(--t400)">${esc(r.answer||'')}</div>
+    <div style="max-height:210px;overflow:auto;background:var(--deep);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.65;white-space:pre-wrap;color:var(--t400)">${esc(answer)}</div>
     ${cites.length?(()=>{
       // 源站构成：这条答案的引用都来自哪些域名、各占多少——占比高的就是该题的主导信源
       const dom={};cites.forEach(c=>{try{const h=new URL(c.url).hostname.replace(/^www\./,'');dom[h]=(dom[h]||0)+1}catch(e){}});

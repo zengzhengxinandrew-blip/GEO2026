@@ -46,6 +46,18 @@ class DocumentLangCase(unittest.TestCase):
         self.assertIn("RECENTJOBS=Array.isArray(jr.jobs)?jr.jobs:[]", self.html)
         self.assertIn("最近任务", self.html)
 
+    def test_sample_view_uses_row_index_instead_of_inline_sample_key(self):
+        """特殊字符不能进入 onclick 源码，否则部分引擎的详情按钮会失效。"""
+        self.assertIn('onclick="openSampleRow(${i})"', self.html)
+        self.assertIn("function openSampleRow(i)", self.html)
+        self.assertNotIn('onclick="sampleModal(${esc(JSON.stringify(r.key))})"', self.html)
+
+    def test_sample_modal_normalizes_legacy_citations(self):
+        """Kimi/豆包旧样本中的字符串或空引用不应让详情弹窗中断。"""
+        self.assertIn("Array.isArray(r.citations)?r.citations:[]", self.html)
+        self.assertIn("typeof c==='string'?{url:c,title:''}:c", self.html)
+        self.assertIn("filter(c=>c&&typeof c.url==='string'&&c.url)", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
