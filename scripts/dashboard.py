@@ -17,6 +17,7 @@ import mimetypes
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 import webbrowser
@@ -203,25 +204,37 @@ def read_asset(slug: str, rel: str) -> dict:
     return {"path": rel, "text": target.read_text("utf-8", "replace")}
 
 
+_ENV_LOCK = threading.RLock()
+
+
 def write_env(updates: dict[str, str]):
-    """更新项目根目录 .env：值为空表示删除该行。同步进当前进程环境，让界面立即生效；
-    任务子进程每次启动都重读 .env，天然生效。"""
+    """先原子保存，再同步进程环境；空值持久化，阻止旧容器凭据复活。"""
+    with _ENV_LOCK:
+        _write_env_locked(updates)
+
+
+def _write_env_locked(updates: dict[str, str]):
     path = G.ENV_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = path.read_text("utf-8").splitlines() if path.exists() else []
     for k, v in updates.items():
         pat = re.compile(rf"\s*(export\s+)?{re.escape(k)}\s*=")
         lines = [ln for ln in lines if not pat.match(ln)]
-        if v:
-            lines.append(f"{k}={v}")
-            os.environ[k] = v
-        else:
-            os.environ.pop(k, None)
-    path.write_text("\n".join(lines) + ("\n" if lines else ""), "utf-8")
+        lines.append(f"{k}={v}")
+    # 同目录临时文件默认 0600；替换前不改变内存，写盘失败不会假装已保存。
+    tmp = None
     try:
-        path.chmod(0o600)  # 密钥文件不给同机其他用户读
-    except OSError:
-        pass
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".env-", delete=False) as f:
+            tmp = Path(f.name)
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+    os.environ.update(updates)
 
 
 def create_project(url: str, name: str, slug: str, market: str, max_pages: int) -> dict:

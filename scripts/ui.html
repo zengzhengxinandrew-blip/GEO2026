@@ -199,6 +199,8 @@ function toast(m,k=''){const t=document.createElement('div');t.className='toast 
 function modal(h){$('#modal').innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div class="box">${h}</div></div>`}
 function closeModal(){$('#modal').innerHTML=''}
 function go(r,extra,fromPop){R=r;Object.assign(ST,extra||{});
+  // 样本会被后台任务追加；重新进入时不能沿用任务前的旧列表。
+  if(r==='samples')invalidateSamples();
   // 接入浏览器历史：每次页面跳转压一条记录，后退/前进在应用内导航而不是退出应用
   if(!fromPop)history.pushState({r,engSel:ST.engSel,gapTab:ST.gapTab,wq:(extra||{}).wq||null},'','#'+r);
   render();scrollTo(0,0);$('#side').classList.remove('open')}
@@ -1121,6 +1123,8 @@ async function pollJob(){
     :`${r.job.status==='done'?'✓':'✗'} ${esc(r.job.label)} ${({done:'完成',failed:'失败',stopped:'已停止',interrupted:'已中断'})[r.job.status]||r.job.status}`;
   if(r.job.status==='running'){POLL=setTimeout(pollJob,900)}
   else{RUNNING=null;
+    // 任务可能刚写入成功/失败样本。列表必须与按需读取的详情使用同一批最新数据。
+    invalidateSamples();
     toast(`${r.job.label} ${r.job.status==='done'?'完成':'结束'}`,r.job.status==='done'?'':'err');
     if(R==='onboard'&&ST.obStep===2){
       if(r.job.status==='done'){ST.obFail=false;ST.obStep=3;await load(SLUG,true);return}
@@ -2948,10 +2952,15 @@ async function asSave(){
 }
 
 /* ===================== 样本库（答案元数据） ===================== */
-let SMP=null,SMPF={date:'',platform:'',flag:''};
+let SMP=null,SMP_REQ=0,SMPF={date:'',platform:'',flag:''};
+function invalidateSamples(){SMP=null;SMP_REQ++}
 async function loadSamples(){
+  const req=++SMP_REQ;
   const q=new URLSearchParams({date:SMPF.date,platform:SMPF.platform,flag:SMPF.flag,limit:'300'});
-  SMP=await api(`/api/samples/${SLUG}?${q}`);
+  const next=await api(`/api/samples/${SLUG}?${q}`,{cache:'no-store'});
+  // 筛选、项目或任务状态改变后，较早发出的慢请求不得覆盖较新的列表。
+  if(req!==SMP_REQ)return;
+  SMP=next;
   render();
 }
 function vSamples(){
@@ -3098,6 +3107,7 @@ function normAnalytics(a){
   return a;
 }
 async function load(slug,keep){
+  invalidateSamples();
   SLUG=slug;
   D=await api('/api/p/'+encodeURIComponent(slug));
   const aerr=D.error||(D.analytics&&D.analytics.error);

@@ -30,10 +30,24 @@ except ImportError:  # 本机轻量安装仍可运行；Docker 镜像会安装�
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = Path(os.environ.get("GEOLOOK_ENV_FILE", ROOT / ".env")).expanduser()
 
+# 仅页面可编辑项以持久化文件为准；部署参数仍由进程环境优先决定。
+# 独立于 sample/publish 的导入，避免启动时循环依赖；测试校验与注册表一致。
+UI_ENV_KEYS = frozenset({
+    "ZHIPUAI_API_KEY", "GLM_MODEL", "ARK_API_KEY", "ARK_MODEL",
+    "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "MOONSHOT_API_KEY", "MOONSHOT_MODEL",
+    "MINIMAX_API_KEY", "MINIMAX_MODEL", "GEMINI_API_KEY", "GEMINI_MODEL",
+    "OPENAI_API_KEY", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+    "XAI_API_KEY", "GROK_MODEL", "PERPLEXITY_API_KEY", "PERPLEXITY_MODEL",
+    "GITHUB_TOKEN", "WP_USER", "WP_APP_PASSWORD", "PUBLISH_WEBHOOK_URL",
+    "WECHAT_APPID", "WECHAT_APPSECRET", "X_API_KEY", "X_API_SECRET",
+    "X_ACCESS_TOKEN", "X_ACCESS_SECRET", "REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
+    "REDDIT_USERNAME", "REDDIT_PASSWORD",
+})
+
 
 def load_env(path: Path | None = None):
-    """读项目根目录的 .env（已 gitignore）。已存在的环境变量优先，不覆盖。"""
-    p = path or (ROOT / ".env")
+    """页面可编辑项：文件值（含显式空值）优先；其他项：非空环境变量优先。"""
+    p = path or ENV_PATH
     if not p.exists():
         return
     for line in p.read_text("utf-8").splitlines():
@@ -41,13 +55,13 @@ def load_env(path: Path | None = None):
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, _, v = line.partition("=")
-        k = k.strip()
+        k = re.sub(r"^export\s+", "", k.strip())
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+            continue
         v = v.strip().strip("'\"")
-        # 容器/compose 常把这些变量预置成空字符串（占位），而空字符串同样算
-        # 「已存在」，会挡住 .env 里真正保存的 Key —— 结果后台保存的凭据只在
-        # 当前进程内存里有效，重启或重新部署后即丢失。空值按「未设置」处理。
-        # 容器里真正有值的环境变量依然优先，命令行注入不受影响。
-        if not os.environ.get(k):
+        # compose 注入的旧 Key 不能盖过页面保存的新值；空值是清除标记，
+        # 不能删除该行，否则重启会重新启用 compose 的旧凭据。
+        if k in UI_ENV_KEYS or not os.environ.get(k):
             os.environ[k] = v
 
 

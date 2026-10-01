@@ -3,9 +3,11 @@
 守住三件事：
 1. 模型在调用时解析——界面改完立即生效，清掉覆盖回落出厂默认（曾经在 import 时固化）；
 2. bootstrap/expand/generate 共用一条 LLM 候选链，不各自漂移；
-3. write_env 写盘与进程环境同步，删除即回落。
+3. write_env 写盘与进程环境同步；清除标记持久化，重启不恢复旧凭据。
 """
 import os
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -113,11 +115,82 @@ class TestWriteEnv(unittest.TestCase):
                     self.assertEqual((root / ".env").stat().st_mode & 0o777, 0o600)
                     # 与调用链联动：写完 model_for 立即取到新值
                     self.assertEqual(S.model_for("glm"), "glm-test-1")
-                    # 空值 = 删除：文件行消失、进程环境回落
+                    # 空值持久化：阻止容器旧配置在重启后复活，模型回落默认。
                     DB.write_env({"GLM_MODEL": ""})
-                    self.assertNotIn("GLM_MODEL", (root / ".env").read_text())
-                    self.assertIsNone(os.environ.get("GLM_MODEL"))
+                    self.assertIn("GLM_MODEL=\n", (root / ".env").read_text())
+                    self.assertEqual(os.environ.get("GLM_MODEL"), "")
                     self.assertEqual(S.model_for("glm"), S.PROVIDERS["glm"]["model"])
+
+    def test_restart_uses_saved_values_and_clear_markers(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ):
+            path = Path(td) / ".env"
+            with mock.patch.object(DB.G, "ENV_PATH", path):
+                DB.write_env({"ARK_API_KEY": "synthetic-new", "MOONSHOT_API_KEY": "synthetic-kimi",
+                              "ARK_MODEL": "synthetic-model"})
+                self.assertEqual(self._restart(path), ["synthetic-new", "synthetic-kimi", "synthetic-model"])
+                DB.write_env({"ARK_API_KEY": "", "MOONSHOT_API_KEY": "", "ARK_MODEL": ""})
+                self.assertEqual(self._restart(path), ["", "", ""])
+                DB.write_env({"ARK_API_KEY": "synthetic-next"})
+                self.assertEqual(self._restart(path), ["synthetic-next", "", ""])
+
+    @staticmethod
+    def _restart(path):
+        env = dict(os.environ, GEOLOOK_ENV_FILE=str(path), ARK_API_KEY="synthetic-old",
+                   MOONSHOT_API_KEY="synthetic-old", ARK_MODEL="synthetic-old")
+        code = ("import geolib, os, json; print(json.dumps([os.environ.get(k) for k in "
+                "('ARK_API_KEY', 'MOONSHOT_API_KEY', 'ARK_MODEL')]))")
+        out = subprocess.check_output([sys.executable, "-c", code], env=env,
+                                      cwd=Path(S.__file__).parent, text=True)
+        return json.loads(out)
+
+    def test_failed_save_keeps_file_and_memory(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {"ARK_API_KEY": "old"}):
+            path = Path(td) / ".env"
+            path.write_text("ARK_API_KEY=old\n", encoding="utf-8")
+            with mock.patch.object(DB.G, "ENV_PATH", path), \
+                 mock.patch.object(DB.os, "replace", side_effect=OSError("simulated write failure")):
+                with self.assertRaises(OSError):
+                    DB.write_env({"ARK_API_KEY": "new"})
+            self.assertEqual(path.read_text(), "ARK_API_KEY=old\n")
+            self.assertEqual(os.environ["ARK_API_KEY"], "old")
+            self.assertEqual(list(Path(td).iterdir()), [path])
+
+
+class TestEnvPrecedence(unittest.TestCase):
+    def test_allowlist_matches_editable_registry(self):
+        import publish as P
+        expected = set(ALL_KEY_ENVS + ALL_MODEL_ENVS)
+        for spec in P.PUBLISHERS.values():
+            expected.update(spec["env"])
+        self.assertEqual(DB.G.UI_ENV_KEYS, expected)
+
+    def test_legacy_file_export_and_deployment_settings(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {
+            "ARK_API_KEY": "old", "MOONSHOT_API_KEY": "inherited",
+            "GEOLOOK_TOKEN": "deployment-token", "GEOLOOK_WORK_DIR": "/deployment/work",
+            "GEOLOOK_PORT": "8765", "OPENAI_BASE_URL": "https://deployment.invalid",
+        }, clear=True):
+            path = Path(td) / ".env"
+            path.write_text('export ARK_API_KEY="saved"\nGEOLOOK_TOKEN=file-token\n'
+                            'GEOLOOK_WORK_DIR=/wrong/work\nGEOLOOK_PORT=9999\n'
+                            'OPENAI_BASE_URL=https://file.invalid\n', encoding="utf-8")
+            with mock.patch.object(DB.G, "ENV_PATH", path):
+                DB.G.load_env()
+            self.assertEqual(os.environ["ARK_API_KEY"], "saved")
+            self.assertEqual(os.environ["MOONSHOT_API_KEY"], "inherited")
+            self.assertEqual(os.environ["GEOLOOK_TOKEN"], "deployment-token")
+            self.assertEqual(os.environ["GEOLOOK_WORK_DIR"], "/deployment/work")
+            self.assertEqual(os.environ["GEOLOOK_PORT"], "8765")
+            self.assertEqual(os.environ["OPENAI_BASE_URL"], "https://deployment.invalid")
+
+    def test_empty_environment_and_missing_file(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {"ARK_API_KEY": ""}, clear=True):
+            path = Path(td) / ".env"
+            DB.G.load_env(path)
+            self.assertEqual(os.environ["ARK_API_KEY"], "")
+            path.write_text("ARK_API_KEY=saved\n", encoding="utf-8")
+            DB.G.load_env(path)
+            self.assertEqual(os.environ["ARK_API_KEY"], "saved")
 
 
 if __name__ == "__main__":

@@ -60,3 +60,30 @@ test('overview does not interpret unmeasured citations as zero', () => {
   box.D.analytics.sample_quality = {provisional: true, warnings: ['采样失败']};
   assert.ok(box.headline()[0].includes('数据不完整'));
 });
+
+test('sample list invalidation discards an older in-flight response', async () => {
+  const box = setup(null);
+  let finish;
+  box.api = () => new Promise(resolve => {finish = resolve});
+  const pending = box.loadSamples();
+  box.invalidateSamples();
+  finish({rows: [{key: 'old-failure', ok: false}], total: 1});
+  await pending;
+  assert.equal(vm.runInContext('SMP', box), null);
+});
+
+test('sample list fetch bypasses browser cache and keeps fresh success metadata', async () => {
+  const box = setup(null);
+  let options;
+  box.api = async (_url, o) => {
+    options = o;
+    return {rows: [{key: 'latest', ok: true, brand_mentioned: true,
+                    brand_rank: 1, competitors: ['竞品A']}], total: 1};
+  };
+  await box.loadSamples();
+  const row = vm.runInContext('SMP.rows[0]', box);
+  assert.equal(options.cache, 'no-store');
+  assert.equal(row.ok, true);
+  assert.equal(row.brand_rank, 1);
+  assert.deepEqual(Array.from(row.competitors), ['竞品A']);
+});
