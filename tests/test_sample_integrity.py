@@ -134,6 +134,12 @@ class SampleIntegrity(unittest.TestCase):
         self.assertEqual(post.call_count, 1)
         self.assertIn("方舟", S.error_hint("doubao", result["error"]))
 
+    def test_doubao_default_and_model_access_hint(self):
+        self.assertEqual(S.PROVIDERS["doubao"]["model"], "doubao-seed-2-0-mini-260428")
+        hint = S.error_hint("doubao", "HTTP 404: InvalidEndpointOrModel.NotFound")
+        self.assertIn("模型", hint)
+        self.assertIn("ep-", hint)
+
     def test_http_detail_returns_saved_provider_error_as_readable_record(self):
         G.write_jsonl(self.path, [record(ok=False)])
         with mock.patch.object(DB.Handler, "_auth", return_value=True):

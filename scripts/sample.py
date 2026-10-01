@@ -49,11 +49,13 @@ PROVIDERS = {
         "name": "豆包(方舟API)", "market": "cn",
         "protocol": "ark",
         "base": "https://ark.cn-beijing.volces.com/api/v3",
-        "model": "doubao-seed-1-6-250615",
+        # Seed 1.6 已进入下线迁移周期；此部署使用已开通的 Seed 2.0 Mini。
+        # 账号不允许按 Model ID 调用时，可在设置里把 ARK_MODEL 改成 ep- 开头的接入点 ID。
+        "model": "doubao-seed-2-0-mini-260428",
         "model_env": "ARK_MODEL",
         "key_env": "ARK_API_KEY",
         "search": True,
-        "note": "开通内容插件后走 responses+web_search 并返回引用；否则退回参数化知识采样",
+        "note": "默认 Seed 2.0 Mini；账号若要求接入点，请把模型改为控制台的 ep- 接入点 ID",
     },
     "deepseek": {
         "name": "DeepSeek", "market": "cn",
@@ -207,6 +209,8 @@ def error_hint(platform: str, error: str) -> str:
         return "采样参数与模型不兼容。这是历史失败记录；更新程序后重新采样，旧记录不会自动变成成功答案。"
     if "429" in error:
         return "服务限流或额度不足，请检查账号额度并稍后重试。"
+    if platform == "doubao" and ("InvalidEndpointOrModel" in error or "ModelNotOpen" in error):
+        return "API Key 已被方舟接收，但当前模型不存在或账号无权调用。请在设置中把模型改为该账号已开通的模型 ID，或控制台中 ep- 开头的推理接入点 ID。"
     return "本条未取得有效答案，不计入提及率；请检查原始错误后重新采样。"
 
 
