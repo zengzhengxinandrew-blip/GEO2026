@@ -25,6 +25,8 @@ jobs:
           REPO_URL: https://github.com/${{ github.repository }}.git
           BRANCH: ${{ github.ref_name }}
           COMPOSE_PROFILES: ${{ secrets.COMPOSE_PROFILES }}
+          # 只有提交信息显式带标记时才做一次付费供应商冒烟测试；正常部署不调用模型。
+          RUN_DOUBAO_SMOKE: ${{ contains(github.event.head_commit.message, '[test-doubao]') && 'yes' || 'no' }}
         run: |
           set -euo pipefail
 
@@ -42,7 +44,7 @@ jobs:
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
 
           ssh -i ~/.ssh/geolook_deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' BRANCH='$BRANCH' COMPOSE_PROFILES='${COMPOSE_PROFILES:-}' bash -s" <<'REMOTE'
+            "APP_DIR='$APP_DIR' REPO_URL='$REPO_URL' BRANCH='$BRANCH' COMPOSE_PROFILES='${COMPOSE_PROFILES:-}' RUN_DOUBAO_SMOKE='$RUN_DOUBAO_SMOKE' bash -s" <<'REMOTE'
           set -euo pipefail
 
           if [ ! -d "$APP_DIR/.git" ]; then
@@ -179,4 +181,27 @@ jobs:
 
           docker compose --profile "$PROFILES" ps
           docker compose logs --tail=40 geolook
+
+          # 提交信息含 [test-doubao] 时，在服务器持久化配置下只采 1 题。
+          # 不回显 Key；结果照常写入样本库，便于在界面直接查看。
+          if [ "$RUN_DOUBAO_SMOKE" = yes ]; then
+            echo "== Doubao one-question API smoke test =="
+            if [ "$health" != "200" ]; then
+              echo "ERROR: service is unhealthy; skip provider call" >&2
+              exit 1
+            fi
+            ACTIVE=$(docker compose --profile "$PROFILES" exec -T geolook python - <<'PY'
+          import sys
+          sys.path.insert(0, "/app/scripts")
+          import jobs
+          print("yes" if any(j.get("status") == "running" for j in jobs.recent("jinghuaban", 50)) else "no")
+          PY
+            )
+            if [ "$ACTIVE" = yes ]; then
+              echo "ERROR: jinghuaban already has a running task; provider test was not started" >&2
+              exit 1
+            fi
+            docker compose --profile "$PROFILES" exec -T geolook \
+              python -u scripts/geo.py sample --slug jinghuaban --platforms doubao --limit 1
+          fi
           REMOTE
