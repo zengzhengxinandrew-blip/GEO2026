@@ -201,7 +201,30 @@ jobs:
               echo "ERROR: jinghuaban already has a running task; provider test was not started" >&2
               exit 1
             fi
+            set +e
             docker compose --profile "$PROFILES" exec -T geolook \
               python -u scripts/geo.py sample --slug jinghuaban --platforms doubao --limit 1
+            SMOKE_RC=$?
+            set -e
+            if [ "$SMOKE_RC" -ne 0 ]; then
+              # 只输出最后一条豆包记录的错误，不输出答案或任何配置值。
+              docker compose --profile "$PROFILES" exec -T geolook python - <<'PY'
+          import re
+          import sys
+          sys.path.insert(0, "/app/scripts")
+          import geolib as G
+
+          sample_dir = G.project_dir("jinghuaban") / "samples"
+          rows = []
+          for path in sorted(sample_dir.glob("*.jsonl")):
+              rows.extend(G.read_jsonl(path))
+          latest = next((r for r in reversed(rows) if r.get("platform") == "doubao"), {})
+          error = str(latest.get("error") or "未记录错误")[:800]
+          error = re.sub(r"(?i)(ark-[a-z0-9_-]{8})[a-z0-9_-]*", r"\1…", error)
+          print("Doubao result: FAILED")
+          print("Doubao error:", error)
+          PY
+              exit "$SMOKE_RC"
+            fi
           fi
           REMOTE
