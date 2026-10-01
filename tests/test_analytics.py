@@ -174,7 +174,7 @@ class TestTrend(Base):
 
     def test_mixed_day_measured(self):
         self.make_project(samples={
-            "2026-07-27.jsonl": [row(mentioned=True), row()],
+            "2026-07-27.jsonl": [{**row(mentioned=True), "round": 1}, {**row(), "round": 2}],
         })
         tr = A.trend("demo")
         self.assertEqual(tr[0]["mention"], 0.5)

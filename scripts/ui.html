@@ -1058,7 +1058,7 @@ function badge(k){
   if(k==='engines')return String((a.engines||[]).length||'');
   if(k==='plan'){const n=(D.tasks||[]).filter(t=>t.status!=='done').length;return n?String(n):''}
   if(k==='gaps'){const q=(a.questions||[]).filter(x=>x.content!=='已成稿'&&!x.brand_probe).length;return q?String(q):''}
-  if(k==='verify'){const n=(a.q_delta||[]).filter(x=>(x.after||0)>(x.before||0)).length;return n?String(n):''}
+  if(k==='verify'){const n=(a.q_delta||[]).filter(x=>x.comparable&&x.after>x.before).length;return n?String(n):''}
   return'';
 }
 function renderSide(){
@@ -1132,22 +1132,25 @@ async function pollJob(){
 function headline(){
   const a=D.analytics,h=a.health,tr=a.trend||[];
   if(h.score==null)return['还没有采样数据','到「设置 → 运行任务」跑一期，才能开始诊断。'];
-  const prev=tr.length>1?tr[tr.length-2]:null;
-  const dm=prev&&prev.mention!=null&&tr[tr.length-1].mention!=null?((tr[tr.length-1].mention-prev.mention)*100).toFixed(1):null;
+  const comparison=a.comparison||{};
+  const dm=comparison.comparable&&comparison.delta!=null?(comparison.delta*100).toFixed(1):null;
   const cite=h.subs.cite,m=h.subs.mention;
+  if(m==null)return['本期尚无有效的品牌可见性样本','请先检查采样是否成功；失败记录不计为品牌未被提及。'];
+  if(a.sample_quality&&a.sample_quality.provisional)return['本期数据不完整，评分仅供参考',a.sample_quality.warnings.join('；')+'。'];
   if((m||0)===0)return['AI 还没有主动提到过你',
     `最近一期 ${tr.length?tr[tr.length-1].samples:0} 条采样中无提示提及率为 0——不是排名靠后，是还没进入候选集。先补内容缺口和 P0 阵地，不是继续铺渠道。`];
-  if((cite||0)<0.05)return['AI 开始提到你了，但几乎不引用你',
+  if(cite==null)return['AI 答案中已出现你的品牌','提及率 '+pct(m)+'；本期没有引用来源，暂时无法判断引用表现。'];
+  if(cite<0.05)return['AI 开始提到你了，但几乎不引用你',
     `提及率 ${pct(m)}${dm?`（较上期 ${dm>0?'+':''}${dm}pp）`:''}，但引用份额只有 ${pct(cite)}——「有人在说你」而「你没有可引用的落点」。优先补可被抽取的内容。`];
-  return['提及与引用同步在涨',`提及率 ${pct(m)}、引用份额 ${pct(cite)}。保持内容节奏，开始扩阵地。`];
+  return['AI 答案中出现了你的品牌与引用',`提及率 ${pct(m)}、引用份额 ${pct(cite)}。`];
 }
 function vOverview(){
   const a=D.analytics,h=a.health,tr=a.trend||[];
   const [ht,hs]=headline();
   const S=h.subs;
   const kpis=[
-    ['GEO 健康分',h.score==null?'—':h.score,`${h.measured.length}/5 项可测${S.fact==null?' · 事实一致性未测':''}`],
-    ['提及率',pct(S.mention),'无提示样本中被主动提到'],
+    ['GEO 健康分',h.score==null?'—':h.score,`${h.measured.length}/5 项可测${a.sample_quality&&a.sample_quality.provisional?' · 暂定':''}${S.fact==null?' · 事实一致性未测':''}`],
+    ['提及率',pct(S.mention),`有效无提示样本 ${a.sample_quality?a.sample_quality.unprompted:'—'} 条`],
     ['引用份额',pct(S.cite),'来源域名里属于你的比例'],
     ['阵地覆盖',S.channel==null?'—':pct(S.channel),'已被 AI 引用的阵地占比'],
     ['内容承接',S.content==null?'—':pct(S.content),'目标问题已有成稿内容'],
@@ -1176,6 +1179,7 @@ function vOverview(){
     <div class="kicker">现状 · 总览</div>
     <h3>${esc(ht)}</h3>
     <p class="soft" style="font-size:14px;max-width:660px">${esc(hs)}</p>
+    <p class="small muted">${esc((a.comparison||{}).reason||'')}。AI 回答存在随机性，建议固定问题、模型和轮次持续观察。</p>
 
     <div class="kpis">
       ${kpis.map(([l,v,n])=>`<div class="card elev" style="gap:4px;padding:15px">
@@ -1188,7 +1192,7 @@ function vOverview(){
       <div class="card elev" style="padding:18px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
           <div><div style="font-size:15px;font-weight:500">GEO 健康分趋势</div>
-            <div style="font-size:11.5px;color:var(--t600)">加权：提及率30 引用25 阵地20 内容15 事实10；未测项权重重新归一。</div></div>
+            <div style="font-size:11.5px;color:var(--t600)">加权：提及率30 引用25 阵地20 内容15 事实10；未测项权重重新归一。历史分数用当前阵地、内容及事实记录重算，仅供参考，不代表当时的完整评分。</div></div>
           ${h.score!=null?`<span class="tag tag-accent">${h.score}</span>`:''}
         </div>
         <div style="margin-top:10px">${svg}</div>
@@ -2182,7 +2186,7 @@ function vVerify(){
   const a=D.analytics,vh=D.verify_history||[];
   const mk=ST.vfMkt||'all';
   const qd=(a.q_delta||[]).filter(x=>mk==='all'||x.market===mk||x.market==='both');
-  const meas=qd.filter(x=>x.after!=null);
+  const meas=qd.filter(x=>x.comparable&&x.after!=null&&x.before!=null);
   const up=meas.filter(x=>(x.after||0)>(x.before||0)),down=meas.filter(x=>(x.after||0)<(x.before||0));
   const last=vh.length?vh[vh.length-1]:null;
   const mtab=(k,l)=>`<button class="btn ${mk===k?'btn-secondary':'btn-ghost'}" style="font-size:12px;padding:3px 10px" onclick="ST.vfMkt='${k}';render()">${l}</button>`;
@@ -2207,12 +2211,12 @@ function vVerify(){
     <div class="tbl"><table class="table"><thead><tr><th>问题</th><th style="width:60px">市场</th><th style="width:170px">提及率变化</th><th style="width:110px">解读</th></tr></thead><tbody>
       ${qd.filter(x=>x.before!=null||x.after!=null).slice(0,16).map(x=>{
         const untested=x.after==null;
-        const d=untested?0:(x.after||0)-(x.before||0);
+        const d=untested||!x.comparable?0:x.after-x.before;
         return `<tr><td style="font-size:13.5px">${esc(x.question)}</td>
         <td style="font-size:12px;color:var(--t500)">${mktLabel(x.market)}</td>
         <td><span style="color:var(--t400)">${x.before==null?'—':pct(x.before)}</span>
           <span class="muted">→</span> <span style="color:${d>0?'var(--a400)':'var(--t400)'}">${x.after==null?'—':pct(x.after)}</span></td>
-        <td><span class="tag ${!untested&&d>0?'pill-good':'tag-dim'}">${untested?'本期未测':d>0?'上升':d<0?'下降':'持平'}</span></td></tr>`}).join('')||
+        <td><span class="tag ${!untested&&d>0?'pill-good':'tag-dim'}" title="${esc(x.note||'')}">${untested?'本期未测':!x.comparable?'暂不可比':d>0?'上升':d<0?'下降':'持平'}</span></td></tr>`}).join('')||
         `<tr><td colspan="4" class="muted" style="font-size:12.5px">${mk==='all'?'需要至少两期采样':'该市场暂无两期对比数据'}</td></tr>`}
     </tbody></table></div>
 
@@ -2651,6 +2655,8 @@ function editKey(i){
   const k=KEYS[i];
   modal(`<h4 style="font-size:17px">${esc(k.label)}</h4>
     ${k.note?`<p class="muted" style="font-size:12px;margin:4px 0 0">${esc(k.note)}</p>`:''}
+    <p class="small muted">已配置只表示保存了密钥，是否可用以最近一次采样结果为准。</p>
+    ${k.env==='ARK_API_KEY'?'<p class="small">请填写火山方舟控制台的完整 API Key，不是资源 ID、模型接入点 ID 或其他平台密钥。</p>':''}
     <div class="field"><label>API Key（${esc(k.env)}${k.ok===true?'，已配置'+(k.key_tail?'，尾号 '+k.key_tail:''):''}）</label>
       <input id="k-key" class="input" type="password" autocomplete="off"
         placeholder="${k.ok===true?'留空则保持现有 Key 不变':'粘贴 API Key'}"></div>
@@ -2957,7 +2963,7 @@ function vSamples(){
       ${opts.map(o=>`<option value="${esc(o[0])}" ${val===o[0]?'selected':''}>${esc(o[1])}</option>`).join('')}</select></label>`;
   return `<div style="padding:32px 44px 72px;max-width:1360px">
     ${head('现状 · 样本库','每条 AI 答案的元数据都在这里，可人工复核纠正',
-      '机器判读用的是正则（品牌名撞词、否定语境、竞品别名都可能误判）。这里是唯一的纠正入口——改完立刻重算当日指标，改过的样本会打「人工」标记，重跑采样不会覆盖你的结论。')}
+      '机器判读可能误判，可在这里人工复核。同日同引擎、同题同轮只显示最后一次采样；失败不计入提及率。复核后立即重算当日指标，人工判断只适用于当时的答案。')}
     <div class="row" style="gap:14px;margin:18px 0 12px;flex-wrap:wrap">
       ${sel('date',SMPF.date,[['','全部日期']].concat((SMP.dates||[]).map(d=>[d,d])),'日期')}
       ${sel('platform',SMPF.platform,[['','全部引擎']].concat((SMP.platforms||[]).map(p=>[p,p])),'引擎')}
@@ -2967,16 +2973,16 @@ function vSamples(){
         ${edited?` · ${edited} 条已人工核对`:''}</span>
     </div>
     <div class="tbl"><table class="table"><thead><tr>
-      <th style="width:88px">日期</th><th style="width:110px">引擎</th><th style="width:66px">来源</th>
+      <th style="width:88px">日期 / 轮次</th><th style="width:110px">引擎</th><th style="width:66px">来源</th>
       <th>问题</th><th style="width:74px">提及</th><th style="width:56px">位次</th>
       <th style="width:150px">竞品</th><th style="width:64px">引用</th><th style="width:96px">标记</th><th style="width:60px"></th>
     </tr></thead><tbody>
       ${rows.map((r,i)=>`<tr ${r.needs_review?'style="background:rgba(255,138,61,.08)"':''}>
-        <td style="font-size:12px;color:var(--t500)">${esc(r.date)}</td>
+        <td style="font-size:12px;color:var(--t500)">${esc(r.date)}<div class="small">第 ${esc(r.round||1)} 轮</div></td>
         <td style="font-size:12.5px">${esc(r.platform_name||r.platform)}</td>
         <td style="font-size:11px;color:var(--t600)" title="${esc((r.evidence_level||'')+(r.session_label?' · '+r.session_label:''))}">${({api:'API',manual:'手工',extension:'插件'})[r.sample_mode]||esc(r.sample_mode||'')}${r.session_mode&&r.session_mode!=='incognito'?`<div style="font-size:9.5px;color:${r.session_mode==='personal'?'var(--accent)':'var(--t700)'}">${r.session_mode==='personal'?'个人号':'专用号'}</div>`:''}</td>
         <td style="font-size:12.5px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.question||'')}">${esc(r.question||'')}</td>
-        <td><span class="tag ${r.brand_mentioned?'tag-accent':'tag-dim'}">${r.brand_mentioned?'是':'否'}</span></td>
+        <td><span class="tag ${r.brand_mentioned?'tag-accent':'tag-dim'}" title="${esc(r.error_hint||'')}">${r.ok===false?'采样失败':r.brand_mentioned?'是':'否'}</span></td>
         <td style="font-size:12.5px;color:var(--t400)">${r.brand_rank||'—'}</td>
         <td style="font-size:11.5px;color:var(--t500);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc((r.competitors||[]).join('、'))}">${esc((r.competitors||[]).join('、'))||'—'}</td>
         <td style="font-size:12px;color:var(--t500)">${r.citations||0}${r.own_domain_cited?' <span style="color:var(--a300)" title="引用了官网">·官</span>':''}</td>
@@ -2989,15 +2995,25 @@ function vSamples(){
   </div>`;
 }
 function openSampleRow(i){
-  // 不把完整 key 拼进内联 JavaScript：旧样本的题号可能含引号、换行等字符，
-  // 经过 HTML 实体解码后会破坏 onclick，表现为只有某些引擎的“查看”点不动。
+  // 用行号查找原始 key，不在事件属性里拼接样本内容。
   const row=SMP&&Array.isArray(SMP.rows)?SMP.rows[i]:null;
   if(!row||!row.key){toast('读取失败：样本标识缺失','err');return}
   sampleModal(row.key);
 }
 async function sampleModal(key){
   const r=await api(`/api/sample/${SLUG}?key=${encodeURIComponent(key)}`);
-  if(!r||r.error){toast('读取失败：'+((r&&r.error)||'服务未响应'),'err');return}
+  // 详情接口成功返回的失败样本也有 error 字段，必须显示其采样原因。
+  if(!r||!r.platform){toast('读取失败：'+((r&&r.error)||'服务未响应'),'err');return}
+  if(r.ok===false){
+    modal(`<h4>${esc(r.platform_name||r.platform)} · 采样失败</h4>
+      <p>${esc(r.question||'')}</p><p class="small">${esc(r.date||'')} · 第 ${esc(r.round||1)} 轮</p>
+      <p>${esc(r.error_hint||'本条未取得有效答案，不计入提及率。')}</p>
+      <pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto">${esc(r.error||'未返回有效答案')}</pre>
+      <p class="small muted">这是当时保存的失败记录，查看不会重新调用 AI。修复配置后请重新采样。</p>
+      <button class="btn btn-secondary" onclick="closeModal();go('settings')">打开引擎设置</button>
+      <button class="btn btn-primary" onclick="closeModal()">关闭</button>`);
+    return;
+  }
   const a=r.analysis&&typeof r.analysis==='object'?r.analysis:{};
   // 兼容早期样本：引用曾可能保存成 URL 字符串，个别失败记录也可能夹有 null。
   const cites=(Array.isArray(r.citations)?r.citations:[]).map(c=>

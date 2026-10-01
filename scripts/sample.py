@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -196,6 +197,19 @@ def available(platform: str) -> bool:
     return bool(p and os.environ.get(p["key_env"]))
 
 
+def error_hint(platform: str, error: str) -> str:
+    """解释采样时的错误；不把它冒充为读取历史样本失败。"""
+    if "401" in error or "AuthenticationError" in error:
+        if platform == "doubao":
+            return "方舟拒绝了 API Key。请在设置中重新填写火山方舟控制台的完整 API Key（不是资源 ID、接入点 ID 或其他平台的 Key），保存后重新采样。"
+        return "API 鉴权失败，请在设置中检查该引擎的 API Key 和账号权限后重新采样。"
+    if "temperature" in error:
+        return "采样参数与模型不兼容。这是历史失败记录；更新程序后重新采样，旧记录不会自动变成成功答案。"
+    if "429" in error:
+        return "服务限流或额度不足，请检查账号额度并稍后重试。"
+    return "本条未取得有效答案，不计入提及率；请检查原始错误后重新采样。"
+
+
 # 所有「挑一个可用 LLM 干活」的模块（bootstrap/expand/generate）共用这一条候选链，
 # 避免各写一份后悄悄漂移。顺序：便宜的国内引擎优先。
 LLM_PREFS = ("deepseek", "glm", "doubao", "openai", "gemini")
@@ -306,7 +320,7 @@ def ask_anthropic(p: dict, key: str, question: str, timeout: int) -> dict:
 
 def ask(platform: str, question: str, timeout: int = 120) -> dict:
     p = PROVIDERS[platform]
-    key = os.environ.get(p["key_env"])
+    key = (os.environ.get(p["key_env"]) or "").strip()
     if not key:
         return {"ok": False, "answer": "", "error": f"缺少环境变量 {p['key_env']}"}
     if p.get("protocol") == "ark":
@@ -316,8 +330,10 @@ def ask(platform: str, question: str, timeout: int = 120) -> dict:
     body = {
         "model": _p_model(p),
         "messages": [{"role": "user", "content": question}],
-        "temperature": 0.7,
     }
+    # Moonshot 的部分模型只接受固定温度。省略参数，使用该模型的官方默认值。
+    if platform != "kimi":
+        body["temperature"] = 0.7
     body.update(p.get("extra", {}))
     delays = (1, 3)  # 超时/429/5xx 指数退避重试 2 次；其他错误（4xx 等）不重试
     for attempt in range(len(delays) + 1):
@@ -490,16 +506,32 @@ def analyze_answer(answer: str, cfg: dict, citations: list | None = None) -> dic
 
 
 def dedup_rows(rows: list[dict]) -> list[dict]:
-    """同日重跑/重复导入去重：按 (platform, question_id, round, sample_mode) 保留最后一条。"""
+    """同日同平台同题同轮同模式只取最后一次尝试，失败也不能回退到旧成功。"""
     seen: dict[tuple, dict] = {}
     for r in rows:
-        seen[(r.get("platform"), r.get("question_id"), r.get("round"), r.get("sample_mode"))] = r
+        identity = (r.get("date"), r.get("platform"),
+                    r.get("question_id") or r.get("question"),
+                    str(r.get("round", 1)), r.get("sample_mode"))
+        old = seen.get(identity)
+        # 同一答案的人工判断不能被重导入覆盖；新答案不能套用旧判断。
+        if (old and old.get("manual_override") and not r.get("manual_override")
+                and old.get("answer") == r.get("answer") and r.get("ok")):
+            r = {**r, **{k: old[k] for k in ("analysis", "manual_override", "needs_review",
+                                            "review_note", "reviewed_at", "evidence_level") if k in old}}
+        seen[identity] = r
     return list(seen.values())
+
+
+def read_sample_rows(path: Path) -> list[dict]:
+    """所有样本读取入口统一去重；日期以每日文件名补全，不修改原始记录。"""
+    return dedup_rows([{**r, "date": r.get("date") or path.stem} for r in G.read_jsonl(path)])
 
 
 def aggregate(rows: list[dict], cfg: dict) -> dict:
     by_platform: dict[str, list[dict]] = {}
     for r in rows:
+        if not r.get("ok"):
+            continue
         by_platform.setdefault(r["platform"], []).append(r)
 
     out = {}
@@ -594,16 +626,21 @@ def run(slug: str, platforms: list[str] | None = None, repeat: int = 1, limit: i
                 jobs.append((plat, q, k + 1))
 
     pdir = G.project_dir(slug)
-    path = pdir / "samples" / f"{G.today()}.jsonl"
+    sample_date = G.today()
+    path = pdir / "samples" / f"{sample_date}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    evaluation_config = hashlib.sha256(json.dumps(cfg.get("brand", {}), sort_keys=True,
+                                                  ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
     def one(job):
         plat, q, rnd = job
         t0 = time.monotonic()
         res = ask(plat, q["text"])
+        if res.get("ok") and not (isinstance(res.get("answer"), str) and res["answer"].strip()):
+            res = {**res, "ok": False, "answer": "", "error": "模型未返回有效答案正文"}
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         rec = {
-            "date": G.today(), "ts": G.now_iso(),
+            "date": sample_date, "ts": G.now_iso(),
             "platform": plat, "platform_name": PROVIDERS[plat]["name"],
             "market": market_of(plat), "terminal": "api", "sample_mode": "api",
             "evidence_level": "B_api_可复现",
@@ -612,6 +649,10 @@ def run(slug: str, platforms: list[str] | None = None, repeat: int = 1, limit: i
             "brand_in_question": brand_in_question(q["text"], cfg),
             "ok": res["ok"], "error": res.get("error"),
             "elapsed_ms": elapsed_ms,
+            "raw_model": res.get("raw_model") or model_for(plat),
+            "sampling_protocol": ("v2-model-default" if plat == "kimi" else
+                                  f"v2-ark-thinking-{_ark_speed_on()}" if plat == "doubao" else "v2"),
+            "evaluation_config": evaluation_config,
             "answer": res.get("answer", ""), "citations": res.get("citations", []),
         }
         rec["analysis"] = analyze_answer(rec["answer"], cfg, rec["citations"]) if res["ok"] else {
@@ -641,6 +682,11 @@ def run(slug: str, platforms: list[str] | None = None, repeat: int = 1, limit: i
                 print(f"[geo] {done:3d}/{total} {flag} [{rec['platform']}] {rec['question'][:32]}",
                       file=sys.stderr, flush=True)
             out.append(rec)
+            if not rec["ok"] and any(code in (rec.get("error") or "") for code in
+                                     ("HTTP 401", "HTTP 403", "HTTP 400")):
+                G.info(f"[{rec['platform']}] {error_hint(rec['platform'], rec.get('error') or '')}")
+                G.info(f"[{rec['platform']}] 停止本引擎剩余请求：{rec.get('error')}")
+                break
             time.sleep(0.4)
         return out
 
@@ -655,16 +701,20 @@ def run(slug: str, platforms: list[str] | None = None, repeat: int = 1, limit: i
                 G.info(f"某平台采样中断：{type(e).__name__}: {e}")
     fh.close()
 
-    all_rows = dedup_rows(G.read_jsonl(path))
+    all_rows = read_sample_rows(path)
     ok_rows = [r for r in all_rows if r.get("ok")]
     metrics = {
-        "slug": slug, "date": G.today(), "generated_at": G.now_iso(),
-        "question_count": len(cfg.get("questions", [])), "sample_count": len(all_rows),
+        "slug": slug, "date": sample_date, "generated_at": G.now_iso(),
+        "question_count": len(cfg.get("questions", [])), "sample_count": len(ok_rows),
+        "attempted_count": len(all_rows), "failed_count": len(all_rows) - len(ok_rows),
         "platforms": aggregate(ok_rows, cfg),
     }
-    G.write_json(pdir / "metrics" / f"{G.today()}.json", metrics)
+    G.write_json(pdir / "metrics" / f"{sample_date}.json", metrics)
     confirm_competitors(slug, ok_rows)
     G.info(f"采样完成：{len(rows)} 条 → {path}")
+    G.info(f"本次成功 {sum(bool(r.get('ok')) for r in rows)}/{total} 个计划样本；失败不参与提及率。")
+    if total and not any(r.get("ok") for r in rows):
+        G.die("本次所有引擎均未取得有效答案，请先修复 API 配置；失败详情已保留在样本库。")
     return metrics
 
 
@@ -753,8 +803,9 @@ def sample_import(slug: str, file: str) -> dict:
 
 def sample_key(r: dict) -> str:
     """样本唯一键。与 dedup_rows 同口径（同日同平台同题同轮同模式唯一）加上日期。"""
-    return "|".join(str(r.get(k, "")) for k in
-                    ("date", "platform", "question_id", "round", "sample_mode"))
+    return "|".join(str(v) for v in (r.get("date", ""), r.get("platform", ""),
+                                    r.get("question_id") or r.get("question", ""),
+                                    r.get("round", 1), r.get("sample_mode", "")))
 
 
 def _sample_files(slug: str) -> list[Path]:
@@ -767,7 +818,7 @@ def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
     """列出样本元数据（不含全文，全文按需单取）。flag: review=待复核 / edited=人工改过。"""
     rows, dates, plats = [], set(), set()
     for f in _sample_files(slug):
-        for r in G.read_jsonl(f):
+        for r in read_sample_rows(f):
             d = r.get("date") or f.stem
             dates.add(d)
             plats.add(r.get("platform"))
@@ -784,6 +835,8 @@ def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
             a = r.get("analysis") or {}
             rows.append({
                 "key": sample_key(r), "date": d, "ts": r.get("ts"),
+                "round": r.get("round", 1),
+                "error_hint": error_hint(r.get("platform", ""), r.get("error") or "") if not r.get("ok") else "",
                 "platform": r.get("platform"), "platform_name": r.get("platform_name"),
                 "market": r.get("market"), "terminal": r.get("terminal"),
                 "sample_mode": r.get("sample_mode"), "evidence_level": r.get("evidence_level"),
@@ -807,9 +860,9 @@ def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
 
 def get_sample(slug: str, key: str) -> dict | None:
     for f in _sample_files(slug):
-        for r in G.read_jsonl(f):
+        for r in read_sample_rows(f):
             if sample_key(r) == key:
-                return r
+                return {**r, "error_hint": error_hint(r.get("platform", ""), r.get("error") or "") if not r.get("ok") else ""}
     return None
 
 
@@ -827,14 +880,17 @@ def patch_sample(slug: str, key: str, patch: dict) -> dict:
         cfg = G.load_config(slug)
         for f in _sample_files(slug):
             rows = G.read_jsonl(f)
-            hit = next((i for i, r in enumerate(rows) if sample_key(r) == key), None)
+            hits = [i for i, r in enumerate(rows) if sample_key({**r, "date": r.get("date") or f.stem}) == key]
+            hit = hits[-1] if hits else None
             if hit is None:
                 continue
             r = rows[hit]
             target_date = r.get("date") or f.stem
             if patch.get("delete"):
-                rows.pop(hit)
+                rows = [r for i, r in enumerate(rows) if i not in hits]
             else:
+                if not r.get("ok"):
+                    return {"ok": False, "error": "采样失败没有有效答案，不能人工改成品牌提及；请重新采样"}
                 a = r.setdefault("analysis", {})
                 for k in _PATCHABLE:
                     if k in patch:
@@ -859,7 +915,7 @@ def patch_sample(slug: str, key: str, patch: dict) -> dict:
 def recompute_metrics(slug: str, cfg: dict, date: str) -> dict:
     pdir = G.project_dir(slug)
     path = pdir / "samples" / f"{date}.jsonl"
-    rows = [r for r in dedup_rows(G.read_jsonl(path)) if r.get("ok")]
+    rows = [r for r in read_sample_rows(path) if r.get("ok")]
     metrics = {
         "slug": slug, "date": date, "generated_at": G.now_iso(),
         "question_count": len(cfg.get("questions", [])), "sample_count": len(rows),
@@ -874,7 +930,7 @@ def store_manual_rows(slug: str, cfg: dict, rows: list[dict]) -> dict:
     pdir = G.project_dir(slug)
     path = pdir / "samples" / f"{G.today()}.jsonl"
     G.write_jsonl(path, G.read_jsonl(path) + rows)
-    all_rows = [r for r in dedup_rows(G.read_jsonl(path)) if r.get("ok")]
+    all_rows = [r for r in read_sample_rows(path) if r.get("ok")]
     metrics = {
         "slug": slug, "date": G.today(), "generated_at": G.now_iso(),
         "question_count": len(cfg.get("questions", [])), "sample_count": len(all_rows),

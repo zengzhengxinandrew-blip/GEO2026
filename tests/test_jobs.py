@@ -70,7 +70,10 @@ class JobsTest(unittest.TestCase):
         proc = mock.Mock()
         proc.pid = 424242
         proc.wait.return_value = 0
-        with mock.patch.object(J.subprocess, "Popen", return_value=proc):
+        # 此测试只检查 PID 落盘，同步结束 waiter，避免临时目录先被清理。
+        with mock.patch.object(J.subprocess, "Popen", return_value=proc), \
+             mock.patch.object(J.threading, "Thread") as thread:
+            thread.return_value.start.side_effect = lambda: thread.call_args.kwargs["target"]()
             job = J.start("x", "audit")
         j = J.get(job["id"])
         self.assertEqual(j["pid"], 424242)

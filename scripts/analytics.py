@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import geolib as G
+import sample as S
 
 WEIGHTS = {"mention": 30, "cite": 25, "channel": 20, "content": 15, "fact": 10}
 
@@ -39,7 +40,53 @@ def _sample_files(pdir: Path):
 
 
 def _rows(path: Path):
-    return [r for r in G.read_jsonl(path) if r.get("ok")]
+    return [r for r in S.read_sample_rows(path) if r.get("ok")]
+
+
+def comparison_key(r):
+    """比较必须是同一问题、引擎、模型、轮次、模式及联网条件。"""
+    return (r.get("platform"), r.get("question_id"), r.get("question"),
+            str(r.get("round", 1)), r.get("sample_mode"), r.get("market"),
+            r.get("raw_model"), r.get("sampling_protocol"), r.get("search_enabled"),
+            r.get("session_mode"), r.get("evaluation_config"))
+
+
+def comparable(before, after):
+    if not before or not after:
+        return False
+    if not all(r.get("raw_model") or r.get("sample_mode") in ("manual", "extension")
+               for r in before + after):
+        return False
+    return {comparison_key(r) for r in before} == {comparison_key(r) for r in after}
+
+
+def sample_quality(slug: str, rows) -> dict:
+    cfg = G.load_config(slug)
+    valid = [r for r in rows if r.get("ok")]
+    up = _unprompted(valid)
+    failed = [r for r in rows if not r.get("ok")]
+    expected = [p for p in cfg.get("platforms", []) if p in S.PROVIDERS and S.questions_for(cfg, p)]
+    actual = {r.get("platform") for r in valid}
+    missing = [p for p in expected if p not in actual]
+    incomplete = []
+    for p in expected:
+        wanted = {q.get("id") for q in S.questions_for(cfg, p)}
+        got = {r.get("question_id") for r in valid if r.get("platform") == p}
+        if wanted - got:
+            incomplete.append(p)
+    reasons = []
+    if failed:
+        reasons.append(f"{len(failed)} 条采样失败，已排除")
+    if missing:
+        reasons.append("未取得有效答案的引擎：" + "、".join(S.label_of(p) for p in missing))
+    if incomplete:
+        reasons.append("部分引擎尚未完成当前问题库")
+    if len(up) < 30:
+        reasons.append(f"仅 {len(up)} 条有效无提示样本，少量答案变化就会明显影响比例")
+    return {"attempted": len(rows), "successful": len(valid), "failed": len(failed),
+            "unprompted": len(up), "missing_platforms": missing,
+            "provisional": bool(failed or missing or incomplete or len(up) < 30),
+            "warnings": reasons}
 
 
 def _unprompted(rows):
@@ -432,19 +479,24 @@ def question_delta(slug: str) -> list[dict]:
         out = {}
         for r in _unprompted(_rows(path)):
             out.setdefault(r.get("question_id"), []).append(r)
-        return {k: _mention(v) for k, v in out.items() if k}
+        return {k: v for k, v in out.items() if k}
     before, after = per_q(files[-2]), per_q(files[-1])
     cfg = G.load_config(slug)
     qtext = {q["id"]: q["text"] for q in cfg.get("questions", [])}
     qmkt = {q["id"]: q.get("market", cfg.get("market", "cn")) for q in cfg.get("questions", [])}
     rows = []
     for qid in sorted(set(before) | set(after)):
-        b, a = before.get(qid), after.get(qid)
+        br, ar = before.get(qid, []), after.get(qid, [])
+        matched = comparable(br, ar)
+        b, a = _mention(br), _mention(ar)
+        note = "本期未测" if a is None else ("" if matched else "采样条件不一致或历史模型信息缺失，不比较升降")
+        if b is not None and a is not None and not matched:
+            b = None
         rows.append({"qid": qid, "question": qtext.get(qid, qid),
                      "market": qmkt.get(qid, "cn"),
                      "before": round(b, 2) if b is not None else None,
                      "after": round(a, 2) if a is not None else None,
-                     "note": "本期未测" if a is None else "",
+                     "note": note, "comparable": matched,
                      "dates": [files[-2].stem, files[-1].stem]})
     # 本期未测（after=None）不参与升降序，列在最后
     rows.sort(key=lambda x: (x["after"] is None, -(((x["after"] or 0) - (x["before"] or 0)))))
@@ -459,12 +511,25 @@ def build(slug: str) -> dict:
     fc = G.read_json(pdir / "factcheck.json", []) or []
     files = _sample_files(pdir)
     rows_latest = _rows(files[-1]) if files else []
-    mfiles = sorted((pdir / "metrics").glob("*.json")) if (pdir / "metrics").exists() else []
-    metrics = G.read_json(mfiles[-1], None) if mfiles else None
+    # 直接从同一天、同一去重口径派生，避免使用旧 metrics 或另一日期的缓存。
+    cfg = G.load_config(slug)
+    metrics = {"platforms": S.aggregate(rows_latest, cfg)}
+    quality = sample_quality(slug, S.read_sample_rows(files[-1]) if files else [])
+    before = _unprompted(_rows(files[-2])) if len(files) > 1 else []
+    after = _unprompted(rows_latest)
+    can_compare = comparable(before, after) and not quality["provisional"]
+    if len(files) > 1:
+        can_compare = can_compare and not sample_quality(slug, S.read_sample_rows(files[-2]))["provisional"]
+    comparison = {"comparable": can_compare,
+                  "delta": round(_mention(after) - _mention(before), 4) if can_compare else None,
+                  "reason": "同题、同引擎、同模型比较；短期变化仍可能来自回答随机性" if can_compare else
+                            "两期采样条件不一致、信息缺失或样本不足，暂不判断升降"}
 
     qs = questions(slug, rows_latest, bp)
     return {
         "latest_date": files[-1].stem if files else None,
+        "sample_quality": quality,
+        "comparison": comparison,
         "health": health(slug, bp, fc, rows_latest),
         "engines": engines(slug, rows_latest, metrics),
         "question_groups": question_groups(qs),
