@@ -461,6 +461,47 @@ def brand_in_question(question: str, cfg: dict) -> bool:
     return any(n and n.lower() in question.lower() for n in names)
 
 
+_CHOICE_CN = re.compile(
+    r"哪家|哪款|哪些(?:品牌|厂家|厂商|供应商|服务商|公司|产品|工具|平台)|"
+    r"哪个(?:品牌|厂家|厂商|供应商|服务商|公司|产品|工具|平台)|"
+    r"(?:品牌|厂家|厂商|供应商|服务商|公司|产品|工具|平台).{0,12}(?:推荐|好用|靠谱|值得选|性价比)|"
+    r"(?:推荐|好用的|靠谱的|值得选的).{0,24}(?:品牌|厂家|厂商|供应商|服务商|公司|产品|工具|平台)|"
+    r"(?:选|找|挑)(?:哪家|哪个品牌|什么品牌|什么厂家|什么供应商|什么服务商)"
+)
+_CHOICE_EN = re.compile(
+    r"\b(?:best|top|recommended?|recommendations?|which|what)\b.{0,60}"
+    r"\b(?:brands?|vendors?|suppliers?|manufacturers?|providers?|companies|products?|tools?|platforms?)\b|"
+    r"\b(?:brands?|vendors?|suppliers?|manufacturers?|providers?|companies|products?|tools?|platforms?)\b"
+    r".{0,60}\b(?:best|recommend|choose|compare|alternative)\b",
+    re.I,
+)
+
+
+def visibility_question(question: str, cfg: dict | None = None, qid: str | None = None) -> bool:
+    """是否有自然的品牌/供应商选择机会；技术知识题不进入提及率分母。
+
+    当前问题库可用 scope=visibility/content 人工覆盖。历史样本按题目文本判定，
+    仅在题号和文本都相同时采用当前问题库的覆盖，避免改题后误改旧样本口径。
+    """
+    if cfg:
+        for q in cfg.get("questions", []):
+            if q.get("id") == qid and q.get("text") == question:
+                if q.get("scope") in ("visibility", "content"):
+                    return q["scope"] == "visibility"
+                break
+    return bool(_CHOICE_CN.search(question) or _CHOICE_EN.search(question))
+
+
+def visibility_sample(row: dict, cfg: dict) -> bool:
+    if any(q.get("id") == row.get("question_id") and
+           q.get("text") == row.get("question") and q.get("scope") == "probe"
+           for q in cfg.get("questions", [])):
+        return False
+    return (not row.get("brand_in_question")
+            and not brand_in_question(row.get("question", ""), cfg)
+            and visibility_question(row.get("question", ""), cfg, row.get("question_id")))
+
+
 def analyze_answer(answer: str, cfg: dict, citations: list | None = None) -> dict:
     brand = cfg["brand"]["name"]
     names, alias = entities_of(cfg)
@@ -544,7 +585,8 @@ def aggregate(rows: list[dict], cfg: dict) -> dict:
         # 它们单独统计成「品牌认知」：AI 到底知不知道这个品牌、说得对不对。
         probe = [r for r in all_rs if r.get("brand_in_question")
                  or brand_in_question(r.get("question", ""), cfg)]
-        rs = [r for r in all_rs if r not in probe]
+        unprompted = [r for r in all_rs if r not in probe]
+        rs = [r for r in unprompted if visibility_sample(r, cfg)]
         # 绝不回退：某平台只采了点名题时，可见性指标就是「未测」（None），
         # 不能把点名样本塞回去凑出 mention_rate=1.0 的假阳性。
         n = len(rs)
@@ -556,18 +598,20 @@ def aggregate(rows: list[dict], cfg: dict) -> dict:
         for r in rs:
             for c in r["analysis"]["competitors_mentioned"]:
                 comp[c] = comp.get(c, 0) + 1
+        for r in unprompted:
             for d in r["analysis"]["cited_domains"]:
                 dom[d] = dom.get(d, 0) + 1
         out[plat] = {
             "market": market,
             "label": label_of(plat),
             "samples": n,
+            "content_samples": len(unprompted) - n,
             "mention_rate": round(len(mentioned) / n, 3) if n else None,
             "top1_rate": round(sum(1 for r in mentioned if r["analysis"]["brand_rank"] == 1) / n, 3) if n else None,
             "top3_rate": round(sum(1 for r in mentioned if 1 <= r["analysis"]["brand_rank"] <= 3) / n, 3) if n else None,
             "avg_rank": round(sum(ranks) / len(ranks), 2) if ranks else None,
-            "own_domain_cite_rate": (round(sum(1 for r in rs if r["analysis"]["own_domain_cited"]) / n, 3)
-                                     if n and G.has_site(cfg) else None),
+            "own_domain_cite_rate": (round(sum(1 for r in unprompted if r["analysis"]["own_domain_cited"]) / len(unprompted), 3)
+                                     if unprompted and G.has_site(cfg) else None),
             "competitor_mentions": dict(sorted(comp.items(), key=lambda x: -x[1])),
             "top_cited_domains": dict(sorted(dom.items(), key=lambda x: -x[1])[:15]),
             # 品牌认知：直接点名品牌时，AI 认不认识、有没有引到官网
@@ -821,6 +865,7 @@ def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
                  flag: str = "", limit: int = 300) -> dict:
     """列出样本元数据（不含全文，全文按需单取）。flag: review=待复核 / edited=人工改过。"""
     rows, dates, plats = [], set(), set()
+    cfg = G.load_config(slug)
     for f in _sample_files(slug):
         for r in read_sample_rows(f):
             d = r.get("date") or f.stem
@@ -846,6 +891,9 @@ def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
                 "sample_mode": r.get("sample_mode"), "evidence_level": r.get("evidence_level"),
                 "session_mode": r.get("session_mode"), "session_label": r.get("session_label"),
                 "question_id": r.get("question_id"), "question": r.get("question"),
+                "visibility": visibility_sample(r, cfg),
+                "brand_probe": bool(r.get("brand_in_question") or
+                                    brand_in_question(r.get("question", ""), cfg)),
                 "ok": r.get("ok"), "answer_chars": a.get("answer_chars") or len(r.get("answer") or ""),
                 "brand_mentioned": a.get("brand_mentioned"), "brand_rank": a.get("brand_rank"),
                 "competitors": a.get("competitors_mentioned") or [],

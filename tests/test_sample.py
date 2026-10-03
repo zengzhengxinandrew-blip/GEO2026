@@ -95,6 +95,33 @@ class TestProbeNoFallback(unittest.TestCase):
         self.assertEqual(m["probe"]["samples"], 1)
 
 
+class TestVisibilityScope(unittest.TestCase):
+    def test_technical_questions_are_content_not_brand_failures(self):
+        technical = [
+            "高校实验室改造洁净室，围护系统一般怎么弄？",
+            "电芯电池厂做洁净车间，围护系统有什么特殊要求？",
+            "肉制品加工厂建冷库，围护系统要注意什么？",
+        ]
+        self.assertTrue(all(not S.visibility_question(q) for q in technical))
+        self.assertTrue(S.visibility_question("洁净室围护系统有哪些靠谱的厂家推荐？"))
+        self.assertTrue(S.visibility_question("Best cleanroom panel suppliers?"))
+
+    def test_technical_rows_do_not_dilute_mention_rate(self):
+        rows = [make_row(qid="choice", question="洁净室围护系统有哪些靠谱的厂家推荐？"),
+                make_row(qid="how", question="高校实验室改造洁净室，围护系统一般怎么弄？",
+                         mentioned=False)]
+        m = S.aggregate(rows, CFG)["deepseek"]
+        self.assertEqual(m["samples"], 1)
+        self.assertEqual(m["content_samples"], 1)
+        self.assertEqual(m["mention_rate"], 1.0)
+
+    def test_manual_scope_override_requires_same_question_text(self):
+        cfg = {**CFG, "questions": [{"id": "q", "text": "围护系统有什么特殊要求？",
+                                    "scope": "visibility"}]}
+        self.assertTrue(S.visibility_question("围护系统有什么特殊要求？", cfg, "q"))
+        self.assertFalse(S.visibility_question("冷库围护系统有什么特殊要求？", cfg, "q"))
+
+
 class TestMarketOf(unittest.TestCase):
     def test_unknown_platform_code(self):
         self.assertEqual(S.market_of("deepssek"), "unknown")

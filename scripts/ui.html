@@ -1139,10 +1139,10 @@ function headline(){
   const comparison=a.comparison||{};
   const dm=comparison.comparable&&comparison.delta!=null?(comparison.delta*100).toFixed(1):null;
   const cite=h.subs.cite,m=h.subs.mention;
-  if(m==null)return['本期尚无有效的品牌可见性样本','请先检查采样是否成功；失败记录不计为品牌未被提及。'];
+   if(m==null)return['本期尚无有效的选型题样本','请先检查选型题采样是否成功；技术内容题与失败记录不计为品牌未被提及。'];
   if(a.sample_quality&&a.sample_quality.provisional)return['本期数据不完整，评分仅供参考',a.sample_quality.warnings.join('；')+'。'];
   if((m||0)===0)return['AI 还没有主动提到过你',
-    `最近一期 ${tr.length?tr[tr.length-1].samples:0} 条采样中无提示提及率为 0——不是排名靠后，是还没进入候选集。先补内容缺口和 P0 阵地，不是继续铺渠道。`];
+     `最近一期 ${a.sample_quality?a.sample_quality.visibility:0} 条选型题样本中提及率为 0——不是排名靠后，是还没进入候选集。先补内容缺口和 P0 阵地，不是继续铺渠道。`];
   if(cite==null)return['AI 答案中已出现你的品牌','提及率 '+pct(m)+'；本期没有引用来源，暂时无法判断引用表现。'];
   if(cite<0.05)return['AI 开始提到你了，但几乎不引用你',
     `提及率 ${pct(m)}${dm?`（较上期 ${dm>0?'+':''}${dm}pp）`:''}，但引用份额只有 ${pct(cite)}——「有人在说你」而「你没有可引用的落点」。优先补可被抽取的内容。`];
@@ -1154,7 +1154,7 @@ function vOverview(){
   const S=h.subs;
   const kpis=[
     ['GEO 健康分',h.score==null?'—':h.score,`${h.measured.length}/5 项可测${a.sample_quality&&a.sample_quality.provisional?' · 暂定':''}${S.fact==null?' · 事实一致性未测':''}`],
-    ['提及率',pct(S.mention),`有效无提示样本 ${a.sample_quality?a.sample_quality.unprompted:'—'} 条`],
+    ['提及率',pct(S.mention),`有效选型样本 ${a.sample_quality?a.sample_quality.visibility:'—'} 条`],
     ['引用份额',pct(S.cite),'来源域名里属于你的比例'],
     ['阵地覆盖',S.channel==null?'—':pct(S.channel),'已被 AI 引用的阵地占比'],
     ['内容承接',S.content==null?'—':pct(S.content),'目标问题已有成稿内容'],
@@ -1267,13 +1267,13 @@ async function vEngines(){
   return `<div style="padding:32px 44px 72px;max-width:1280px">
     ${head('现状 · 引擎表现','引擎之间的差距，是各自偏好信源的差距','看每个引擎在引用谁——那就是你要去建设的阵地清单。API 采样与网页端结果口径不同，行内已标注是否联网。<span style="color:var(--a300);cursor:pointer" onclick="showMethod()">这些数字怎么算的 →</span>')}
     <div class="tbl"><table class="table" style="margin-top:22px"><thead><tr>
-      <th style="width:140px">引擎</th><th style="width:70px">样本</th><th style="width:90px">提及率</th>
+       <th style="width:140px">引擎</th><th style="width:70px">选型样本</th><th style="width:90px">提及率</th>
       <th style="width:90px">提及位次</th><th style="width:120px">引用份额</th>
       <th style="width:220px">它实际在引用</th><th>结论</th></tr></thead><tbody>
       ${engs.map(x=>`<tr style="cursor:pointer" onclick="ST.engSel=${esc(JSON.stringify(x.platform))};render()">
         <td><span style="font-size:14px;${x.platform===sel?'color:var(--a300)':''}">${esc(x.label)}</span>
           <div style="font-size:10.5px;color:var(--t600)">${mktLabel(x.market)} · ${x.searched?'联网':'参数化知识'}${x.avg_ms?` · 中位 ${(x.avg_ms/1000).toFixed(1)}s/题`:''}</div></td>
-        <td style="font-size:13px;color:var(--t400)">${x.samples}</td>
+        <td style="font-size:13px;color:var(--t400)" title="另有 ${x.content_samples||0} 条内容题；引用份额仍包含这些无提示答案">${x.samples}</td>
         <td><span class="tag ${(x.mention||0)>0?'pill-good':'pill-warn'}">${pct(x.mention)}</span></td>
         <td style="font-size:13px;color:var(--t400)">${x.pos_median==null?'—':x.pos_median}</td>
         <td style="font-size:13px;color:var(--t400)">${pct(x.cite_share)}<span class="muted" style="font-size:10.5px"> ${x.cite_counts[0]}/${x.cite_counts[1]}</span></td>
@@ -1304,7 +1304,7 @@ async function vEngines(){
       </div>
       <div class="card elev" style="padding:18px">
         <div style="font-size:15px;font-weight:500">这个引擎提到谁</div>
-        <div style="font-size:11.5px;color:var(--t600);margin-bottom:6px">无提示样本里各品牌被提及的比例（⭑ 是你）。</div>
+        <div style="font-size:11.5px;color:var(--t600);margin-bottom:6px">选型样本里各品牌被提及的比例（⭑ 是你）。</div>
         ${distRows(e.brand_dist,D.brand.name)}
         <button class="btn btn-ghost" style="align-self:flex-start;margin-top:8px" onclick="go('competitors')">到竞品对比看全市场 →</button>
       </div>
@@ -1322,13 +1322,13 @@ async function vEngines(){
 
     ${(a.brand_dist&&((a.brand_dist.cn||[]).length||(a.brand_dist.global||[]).length))?`
     <h4 style="font-size:16px;margin:28px 0 6px">全部引擎 · 品牌提及分布</h4>
-    <p class="muted" style="font-size:12px;margin-bottom:10px">同一批无提示样本里，各品牌被提及的样本占比（含别名合并）。口径：只统计你与已配置竞品——没配置的品牌不会出现在这里，竞品清单越全分布越真实，缺了就到「设置 → 编辑当前品牌配置」补。</p>
+    <p class="muted" style="font-size:12px;margin-bottom:10px">同一批选型样本里，各品牌被提及的样本占比（含别名合并）。内容题和点名题不参与。只统计你与已配置竞品——没配置的品牌不会出现在这里。</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       ${[['cn','国内市场'],['global','海外市场']].map(([m,l])=>{
         const list=a.brand_dist[m]||[];if(!list.length)return'';
         const ns=((a.competitors||{}).sample_ns||{})[m]||0;
         return `<div class="card elev" style="padding:18px">
-          <div style="font-size:13.5px;font-weight:500;margin-bottom:6px">${l}<span class="muted" style="font-size:11px;font-weight:400"> · 分母 ${ns} 条无提示样本</span></div>
+          <div style="font-size:13.5px;font-weight:500;margin-bottom:6px">${l}<span class="muted" style="font-size:11px;font-weight:400"> · 分母 ${ns} 条选型样本</span></div>
           ${distRows(list,D.brand.name)}</div>`}).join('')}
     </div>`:''}
   </div>`;
@@ -1356,7 +1356,7 @@ function vCompetitors(){
         title="${s.hits} 次引用${s.covered?' · 你的语境里也出现过这个域名':' · 只在竞品语境出现——你没覆盖的阵地'}">${esc(s.domain)} ×${s.hits}</span>`).join(' ')
       ||'<span class="muted" style="font-size:11.5px">—</span>');
   const tbl=(rows,n,label)=>rows.length?`
-    <h4 style="font-size:15px;margin:26px 0 4px">${label}<span style="font-size:11.5px;color:var(--t600);font-weight:400"> · 分母为本市场 ${n} 条无提示样本</span></h4>
+    <h4 style="font-size:15px;margin:26px 0 4px">${label}<span style="font-size:11.5px;color:var(--t600);font-weight:400"> · 分母为本市场 ${n} 条选型样本</span></h4>
     <div class="tbl"><table class="table"><thead><tr>
       <th style="width:150px">品牌</th><th style="width:90px">出现率</th><th style="width:80px">命中样本</th><th style="width:220px">最强引擎（点击联动）</th><th style="width:300px">它被谁引用（高亮=你没覆盖）</th><th>说明</th></tr></thead><tbody>
       ${meRow}
@@ -1424,7 +1424,7 @@ function vCompetitors(){
     </div>`;
   return `<div style="padding:32px 44px 72px;max-width:1280px">
     ${head('现状 · 竞品对比',`${esc(topName)}赢在信源占位，不在产品`,
-      `同一批无提示采样下的对手出现率，国内（${NS.cn||0} 条）与海外（${NS.global||0} 条）分开算、分母各用各的。对手领先是可复制的——补上它们被引用的那类内容，你就能进同一批回答。竞品的引用份额与内容承接无法从外部测量，故不列。`)}
+      `同一批选型采样下的对手出现率，国内（${NS.cn||0} 条）与海外（${NS.global||0} 条）分开算、分母各用各的。技术内容题和点名题不参与。竞品的引用份额与内容承接无法从外部测量，故不列。`)}
     <div class="tabs" style="margin-top:18px">
       ${tb('market','市场格局',flat.length)}
       ${tb('battle','攻守问题',(c.lost||[]).length+(c.won||[]).length)}
@@ -1516,7 +1516,7 @@ function vQuestions(){
         <span style="font-size:10px;color:${kindCol[g.kind]||'var(--t600)'}">${esc(g.kind)}</span>
         <span style="margin-left:auto;font-size:11.5px;color:var(--t600)">${g.total} 题</span></div>
       <div style="font-size:19px;font-weight:500;color:${g.mention_rate==null?'var(--t600)':(g.mention_rate>0?'var(--a300)':'var(--accent)')}">
-        ${g.kind==='探测'?'—':(g.mention_rate==null?'未测':pct(g.mention_rate))}</div>
+        ${g.kind==='探测'?'—':(g.mention_rate==null?(g.kind==='教育'?'内容观察':'未测'):pct(g.mention_rate))}</div>
       <div style="font-size:10.5px;color:var(--t600)">${g.kind==='探测'?'点名题不计入提及率'
         :`${g.sampled} 题已采${g.lost?` · <span style="color:var(--accent)">${g.lost} 题失守</span>`:''}${g.no_content?` · ${g.no_content} 题无内容`:''}`}</div>
     </div>`).join('')}
@@ -1526,10 +1526,10 @@ function vQuestions(){
     const sep=q.brand_probe&&!probeSep?(probeSep=true,
       `<tr><td colspan="7" style="padding:16px 12px 6px;font-size:12px;color:var(--t500)">品牌认知 · 点名探测题（展示品牌被复述率，不计入提及率，也不参与上方选题排序）</td></tr>`):'';
     return sep+`<tr>
-        <td style="font-size:13.5px">${esc(q.text)}${q.brand_probe?' <span class="tag tag-dim" style="font-size:10px">点名</span>':''}${q.brand_probe?'':demandTag(q.id)}</td>
+        <td style="font-size:13.5px">${esc(q.text)}${q.brand_probe?' <span class="tag tag-dim" style="font-size:10px">点名</span>':(!q.visibility?' <span class="tag tag-dim" style="font-size:10px" title="保留答案供内容分析，不进入品牌提及率分母">内容题</span>':'')}${q.brand_probe?'':demandTag(q.id)}</td>
         <td><span class="tag tag-neutral">${esc(q.group)}</span></td>
         <td style="font-size:12.5px;color:var(--t500)">${mktLabel(q.market)}</td>
-        <td><span class="tag ${(q.mention||0)>0?'pill-good':'pill-warn'}">${q.mention==null?'未采样':pct(q.mention)}</span></td>
+        <td>${!q.brand_probe&&!q.visibility?'<span class="tag tag-dim" title="这类问法不要求 AI 推荐品牌，不计入提及率">不计入</span>':`<span class="tag ${(q.mention||0)>0?'pill-good':'pill-warn'}">${q.mention==null?'未采样':pct(q.mention)}</span>`}</td>
         <td>${q.brand_probe?'<span style="font-size:12px;color:var(--t600)">—</span>':diagTag(q.diagnosis)}</td>
         <td style="font-size:12.5px;color:${q.content==='已成稿'?'var(--a300)':'var(--t500)'}">${esc(q.content)}${(window.__pubQ||{})[q.id]?` <span class="tag tag-accent" style="font-size:10px" title="${esc(window.__pubQ[q.id])}">已发布</span>`:''}</td>
         <td><div class="row" style="gap:2px"><button class="btn btn-ghost" style="font-size:12px" onclick="go('workbench',{wq:${esc(JSON.stringify(q.id))}})">写内容</button>
@@ -1539,7 +1539,7 @@ function vQuestions(){
   return `<div style="padding:32px 44px 72px;max-width:1280px">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px">
       <div>${head('现状 · 问题库',`${qs.length} 个问题，是全站所有数字的来源`,
-        '「问题」= 真实用户会向 AI 提的一句问题。改这里会改变所有页面的数字。带「点名」标记的属于品牌认知探测，不计入提及率。<span style="color:var(--a300);cursor:pointer" onclick="showMethod()">问题是怎么批量生成的 →</span>')}</div>
+        '「选型题」才进入品牌提及率；「内容题」保留答案但不因未提品牌扣分；「点名题」单列品牌认知。可在编辑问题库中人工调整。<span style="color:var(--a300);cursor:pointer" onclick="showMethod()">完整口径 →</span>')}</div>
       <div class="row" style="flex:none">
         <button class="btn btn-ghost" onclick="showMethod()">生成规则</button>
         <button class="btn btn-secondary" onclick="editQuestions()">编辑问题库</button>
@@ -1565,16 +1565,16 @@ function showMethod(){
   const li=(t)=>`<li style="margin:5px 0;line-height:1.6">${t}</li>`;
   const h=(t)=>`<div style="font-size:14px;font-weight:500;margin:18px 0 4px;color:var(--a300)">${t}</div>`;
   modal(`<h4 style="font-size:17px">这些数字怎么来的——生成规则与指标口径</h4>
-    <p class="muted" style="font-size:12.5px;margin-top:4px">全站指标都来自「问题库 × 引擎」的批量采样。规则是固定的、可复现的，下面是完整口径。</p>
+    <p class="muted" style="font-size:12.5px;margin-top:4px">提及率只看选型题；内容题和点名题另作分析。旧样本会按新口径重新计算，因此新版数字不能直接和旧版截图比较。</p>
 
     ${h('一、问题库怎么批量生成（接入品牌 / AI 补充选题）')}
     <ul style="font-size:12.5px;color:var(--t400);padding-left:18px">
-      ${li('输入只有四样：<b>品牌名、品类、目标用户、一句话定义</b>——全部从官网正文自动抽取，抽不到的标「待确认」，不用常识填充。')}
+      ${li('从官网或介绍材料提取<b>品牌名、品类、官网确认的产品/能力、目标用户、一句话定义</b>；出题限制在这些有依据的业务范围内。')}
       ${li('由你配置的 LLM 按固定提示词出题，分七组：<b>推荐、比较、替代、价格、风险、品牌验证、场景</b>，每组 2–4 题。')}
       ${li('题量按市场定：国内 18–24 题；海外 14–20 题；双市场 = 国内 16–20 + 海外 12–16 + 通用 2。编号 q001 起为国内、q101 起为海外、q901 起为通用。')}
       ${li('要求真实口语问法：国内题像真人在 AI 里打的字；海外题是<b>英文原生问法</b>，不是中文题翻译。')}
       ${li('<b>关键纪律：绝大多数问题不出现品牌名</b>——考的是 AI 会不会主动想到你。只有「品牌验证」组点名，这类题带「点名」标记，单独归品牌认知，不计入提及率。')}
-      ${li('生成后自动去重、校验分组与市场标记；问题库随时可人工编辑，改完重跑采样才生效。')}
+      ${li('生成后自动去重、校验分组与市场标记，并标记「选型题 / 内容题 / 点名题」。旧题按文字规则回判；边界题可在编辑问题库里人工改用途。改题需重新采样，改用途可重算已有答案。')}
       ${li('拓词选题：以品牌/竞品/品类为词根，拉百度下拉（国内）与 Google 补全（海外）的真实搜索词，按线索词归入七组并转写成问句。只产候选、入库必须手动勾选；每期快照 diff，首次出现的词标「需求上升」，参与选题排序但不进任何指标。')}
     </ul>
 
@@ -1589,14 +1589,14 @@ function showMethod(){
 
     ${h('三、指标口径（引擎表现页每一列）')}
     <ul style="font-size:12.5px;color:var(--t400);padding-left:18px">
-      ${li('<b>提及率</b> = 无提示样本中，回答提到品牌（含别名）的比例。问题里点名了品牌的样本一律剔除——否则必然 100%，是假阳性。别名漏配会低估，到「设置 → 编辑当前品牌配置」补。')}
+      ${li('<b>提及率</b> = 有效「选型题」样本中，回答主动提到品牌（含别名）的比例。技术做法/特殊要求/注意事项等内容题，以及点名品牌的探测题，都不进入分母。内容题仍可查看答案、做内容规划；别名漏配会低估提及率。')}
       ${li('<b>提及位次</b> = 回答里品牌相对其他候选品牌出现顺序的中位数，越小越靠前。')}
       ${li('<b>引用份额</b> = 回答引用的全部域名条数中，属于你自有域名（含子域名）的比例。不联网引擎通常没有引用，显示 —。')}
       ${li('<b>结论</b>列的判语规则：0% → 完全不可见；严格高于同市场所有引擎 → 表现最好；≥5% → 有存在感但不稳定；&lt;5% → 偶发提及；从未引用你的域名会单独标注。样本不足或无法比较时不下结论。')}
       ${li('<b>GEO 健康分</b> = 提及率×30 + 引用份额×25 + 阵地覆盖×20 + 内容承接×15 + 事实一致性×10。没测到的项不按 0 分计，而是把权重重新归一，避免惩罚「还没测」。')}
       ${li('<b>诊断</b>列（问题库/差距诊断）按固定优先级分型：<b>疑似负面</b>（品牌附近命中负面线索词，需人工复核）&gt; <b>竞品主导</b>（你 0% 且某对手出现率 ≥50%）&gt; <b>完全缺席</b>（0%）&gt; <b>排名靠后</b>（位次中位 &gt;3）&gt; 表现正常。悬停标签可看依据。')}
       ${li('<b>疑似负面</b>只是线索词（避雷/不推荐/投诉/scam 等）在品牌名 ±百余字符窗口内命中，不做自动定性——定性靠样本回放人工复核，误报比漏报便宜。')}
-      ${li('<b>品牌提及分布 / 竞品最强引擎</b>：统计回答中出现的你与已配置竞品（别名并入），分母为对应范围的无提示样本数，同一样本提多次只算一次。<b>未配置的品牌不计入</b>——竞品清单和别名越全，分布越真实。')}
+      ${li('<b>品牌提及分布 / 竞品最强引擎</b>：只用选型题统计回答中出现的你与已配置竞品（别名并入），同一样本提多次只算一次。<b>未配置的品牌不计入</b>。引用份额仍看全部无提示答案，包括内容题。')}
     </ul>
 
     <p class="muted" style="font-size:11.5px;margin-top:10px">规则实现在 scripts/bootstrap.py（出题）、expand.py（拓词）、sample.py（采样与判定）、analytics.py（指标），本弹窗与代码同步维护。</p>
@@ -1605,9 +1605,9 @@ function showMethod(){
 }
 async function editQuestions(){
   const cfg=await api('/api/config/'+SLUG);
-  const rows=(cfg.questions||[]).map(q=>`${q.id}|${q.group}|${q.market}|${q.text}`).join('\n');
+  const rows=(cfg.questions||[]).map(q=>`${q.id}|${q.group}|${q.market}|${q.scope||'auto'}|${q.text}`).join('\n');
   modal(`<h4 style="font-size:17px">编辑问题库</h4>
-    <p class="muted" style="font-size:12px">每行一题：<code>编号|分组|市场(cn/global/both)|问题</code>。保存后重跑采样才生效。</p>
+    <p class="muted" style="font-size:12px">每行一题：<code>编号|分组|市场(cn/global/both)|用途(visibility/content/auto)|问题</code>。visibility=选型题，content=内容题，auto=自动判定。旧四列格式仍可用；改用途会重算已有答案，改题需重采样。</p>
     <textarea id="qedit" class="input" rows="18">${esc(rows)}</textarea>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button class="btn btn-secondary" onclick="closeModal()">取消</button>
@@ -1618,7 +1618,10 @@ async function saveQuestions(){
   const qs=[];
   for(const line of $('#qedit').value.split('\n')){
     const m=line.split('|');if(m.length<4||!m[3].trim())continue;
-    qs.push({id:m[0].trim(),group:m[1].trim()||'推荐',market:['cn','global','both'].indexOf(m[2].trim())>=0?m[2].trim():'cn',text:m.slice(3).join('|').trim()});
+    const hasScope=m.length>=5&&['visibility','content','auto','probe'].includes(m[3].trim());
+    const scope=hasScope?m[3].trim():'auto',text=m.slice(hasScope?4:3).join('|').trim();
+    if(!text)continue;
+    qs.push({id:m[0].trim(),group:m[1].trim()||'推荐',market:['cn','global','both'].indexOf(m[2].trim())>=0?m[2].trim():'cn',text,...(scope==='auto'?{}:{scope})});
   }
   cfg.questions=qs; if(cfg.bootstrap)cfg.bootstrap.needs_review=false;
   const r=await post('/api/config/'+SLUG,cfg);
@@ -2972,7 +2975,7 @@ function vSamples(){
       ${opts.map(o=>`<option value="${esc(o[0])}" ${val===o[0]?'selected':''}>${esc(o[1])}</option>`).join('')}</select></label>`;
   return `<div style="padding:32px 44px 72px;max-width:1360px">
     ${head('现状 · 样本库','每条 AI 答案的元数据都在这里，可人工复核纠正',
-      '机器判读可能误判，可在这里人工复核。同日同引擎、同题同轮只显示最后一次采样；失败不计入提及率。复核后立即重算当日指标，人工判断只适用于当时的答案。')}
+       '机器判读可能误判，可在这里人工复核。同日同引擎、同题同轮只显示最后一次采样；失败、内容题和点名题不计入品牌提及率。内容题仍可查看答案。')}
     <div class="row" style="gap:14px;margin:18px 0 12px;flex-wrap:wrap">
       ${sel('date',SMPF.date,[['','全部日期']].concat((SMP.dates||[]).map(d=>[d,d])),'日期')}
       ${sel('platform',SMPF.platform,[['','全部引擎']].concat((SMP.platforms||[]).map(p=>[p,p])),'引擎')}
@@ -2990,7 +2993,7 @@ function vSamples(){
         <td style="font-size:12px;color:var(--t500)">${esc(r.date)}<div class="small">第 ${esc(r.round||1)} 轮</div></td>
         <td style="font-size:12.5px">${esc(r.platform_name||r.platform)}</td>
         <td style="font-size:11px;color:var(--t600)" title="${esc((r.evidence_level||'')+(r.session_label?' · '+r.session_label:''))}">${({api:'API',manual:'手工',extension:'插件'})[r.sample_mode]||esc(r.sample_mode||'')}${r.session_mode&&r.session_mode!=='incognito'?`<div style="font-size:9.5px;color:${r.session_mode==='personal'?'var(--accent)':'var(--t700)'}">${r.session_mode==='personal'?'个人号':'专用号'}</div>`:''}</td>
-        <td style="font-size:12.5px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.question||'')}">${esc(r.question||'')}</td>
+        <td style="font-size:12.5px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.question||'')}">${esc(r.question||'')}${r.brand_probe?' <span class="tag tag-dim">点名题</span>':(!r.visibility?' <span class="tag tag-dim">内容题</span>':'')}</td>
         <td><span class="tag ${r.brand_mentioned?'tag-accent':'tag-dim'}" title="${esc(r.error_hint||'')}">${r.ok===false?'采样失败':r.brand_mentioned?'是':'否'}</span></td>
         <td style="font-size:12.5px;color:var(--t400)">${r.brand_rank||'—'}</td>
         <td style="font-size:11.5px;color:var(--t500);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc((r.competitors||[]).join('、'))}">${esc((r.competitors||[]).join('、'))||'—'}</td>

@@ -62,11 +62,11 @@ def optimization_plan(slug: str) -> str:
             oc_v = [v["own_domain_cite_rate"] for v in rows if v.get("own_domain_cite_rate") is not None]
             mr = f"{sum(mr_v)/len(mr_v):.0%}" if mr_v else "未测"
             oc = f"{sum(oc_v)/len(oc_v):.0%}" if oc_v else "未测"
-            L.append(f"- {name}市场：{len(rows)} 个平台端平均**无提示提及率 {mr}**、"
+            L.append(f"- {name}市场：{len(rows)} 个平台端平均**选型题提及率 {mr}**、"
                      f"引用官网率 {oc}")
         L.append("")
-        L += ["> 「无提示提及率」指问题里不出现品牌名时，AI 主动提到你的比例。",
-              "> 点名提问的样本已单独归入品牌认知，不混进这个指标——否则是假阳性。", ""]
+        L += ["> 「选型题提及率」只统计未点名品牌、且自然需要比较品牌/供应商/产品的问题。",
+              "> 技术做法、特殊要求等内容题不进入分母；点名题单列品牌认知。旧样本按新口径重算。", ""]
 
     L += ["## 二、要改什么：三个层次", "",
           "GEO 不是一件事，是三段漏斗。每一段的瓶颈不同，动作也不同。", "",
@@ -172,7 +172,7 @@ def optimization_plan(slug: str) -> str:
             if rows:
                 cur_v = [v["mention_rate"] for v in rows if v.get("mention_rate") is not None]
                 cur = f"{sum(cur_v)/len(cur_v):.0%}" if cur_v else "未测"
-                L.append(f"| {name}无提示提及率 | {cur} | {tg.get('mention_rate', .3):.0%} |")
+                L.append(f"| {name}选型题提及率 | {cur} | {tg.get('mention_rate', .3):.0%} |")
     L += [f"| 引用官网率 | {f'{own:.0%}' if own is not None else '未测'} | {tg.get('own_domain_cite_rate', .2):.0%} |", "",
           "## 七、边界", "",
           "- GEO 提升的是**被引用的概率**，不承诺任何平台一定会引用某个页面",

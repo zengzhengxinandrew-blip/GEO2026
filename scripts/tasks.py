@@ -275,13 +275,13 @@ def from_metrics(metrics: dict, cfg: dict, seq) -> list[dict]:
             avg = sum(rates) / len(rates)
             if avg < target:
                 out.append(_t(next(seq), "P1", "监测闭环",
-                              f"{mk_name}无提示提及率 {avg:.0%} → {target:.0%}",
-                              f"{mk_name}市场 {len(rates)} 个已测平台的无提示提及率均值仅 {avg:.0%}，"
+                              f"{mk_name}选型题提及率 {avg:.0%} → {target:.0%}",
+                              f"{mk_name}市场 {len(rates)} 个已测平台的选型题提及率均值仅 {avg:.0%}，"
                               "说明还没进入候选集（method.md 三段漏斗 ①②）",
                               "这是内容矩阵 + 外部信源两个包的综合结果指标，不单独派工，用于季度验收",
                               "GEO顾问", "L",
                               {"type": "auto", "check": f"metrics.mention_rate_gte:{mk}:{target}",
-                               "desc": f"{mk_name}平均无提示提及率 ≥ {target:.0%}"}, market=mk))
+                                "desc": f"{mk_name}平均选型题提及率 ≥ {target:.0%}"}, market=mk))
         own = [m["own_domain_cite_rate"] for m in rows.values() if m.get("own_domain_cite_rate") is not None]
         if own and sum(own) / len(own) < 0.1:
             out.append(_t(next(seq), "P1", "外部证据",

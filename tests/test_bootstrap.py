@@ -61,6 +61,27 @@ class TestHomepageFirst(WorkDirCase):
         self.assertNotIn(deep, blocks[0])
 
 
+class TestQuestionBankScope(unittest.TestCase):
+    def test_products_ground_prompt_and_technical_question_is_content(self):
+        captured = {}
+
+        def fake_ask(prompt):
+            captured["prompt"] = prompt
+            return {"questions": [
+                {"id": "q001", "group": "场景", "market": "cn", "scope": "visibility",
+                 "text": "高校实验室改造洁净室，围护系统一般怎么弄？"},
+                {"id": "q002", "group": "推荐", "market": "cn", "scope": "visibility",
+                 "text": "洁净室围护系统有哪些靠谱的厂家推荐？"},
+            ]}
+
+        with mock.patch.object(B, "_ask_json", side_effect=fake_ask):
+            qs = B.question_bank({"name": "测试品牌", "industry": "洁净室围护",
+                                  "products": ["洁净室围护系统"], "target_users": "工厂",
+                                  "definition": "测试品牌提供洁净室围护系统"}, "cn")
+        self.assertIn("官网确认的产品/能力：洁净室围护系统", captured["prompt"])
+        self.assertEqual([q["scope"] for q in qs], ["content", "visibility"])
+
+
 class TestCompetitorConfirmation(WorkDirCase):
     def _manual_file(self, answer):
         f = Path(self._tmp.name) / "manual.md"

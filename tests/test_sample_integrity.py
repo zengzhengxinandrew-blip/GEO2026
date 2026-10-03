@@ -20,12 +20,12 @@ import dashboard as DB
 
 CFG = {"brand": {"name": "Acme", "aliases": [], "site": "https://acme.example"},
        "market": "cn", "competitors": [], "platforms": ["kimi"],
-       "questions": [{"id": f"q{i}", "text": f"推荐方案 {i}", "market": "cn"} for i in range(30)]}
+       "questions": [{"id": f"q{i}", "text": f"推荐哪些方案供应商 {i}", "market": "cn"} for i in range(30)]}
 
 
 def record(q=0, ok=True, mentioned=False, **kw):
     return {"date": "2026-10-01", "platform": "kimi", "platform_name": "Kimi",
-            "market": "cn", "question_id": f"q{q}", "question": f"推荐方案 {q}",
+            "market": "cn", "question_id": f"q{q}", "question": f"推荐哪些方案供应商 {q}",
             "round": 1, "sample_mode": "api", "ok": ok, "brand_in_question": False,
             "answer": "Acme answer" if ok else "", "error": None if ok else "HTTP 401: invalid key",
             "raw_model": "kimi-test", "sampling_protocol": "v2-model-default", "search_enabled": False,

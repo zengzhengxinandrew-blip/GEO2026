@@ -3,7 +3,7 @@
 统一命名（全站唯一叫法，UI 与报告都用这套）：
   问题       真实用户会向 AI 提的一句问题，是所有采样的单位
   阵地       一个能被 AI 引用的站点
-  提及率     不含品牌名的问题中，AI 主动提到品牌的样本比例
+  提及率     未点名品牌、且有品牌/供应商选择机会的问题中，AI 主动提到品牌的样本比例
   引用份额   AI 列出的来源域名里属于品牌自有域名的比例
   GEO 健康分 五项加权：提及率30 引用份额25 阵地覆盖20 内容承接15 事实一致性10
   任务       一条可分派、可验收的动作（原「工单」）
@@ -63,7 +63,7 @@ def comparable(before, after):
 def sample_quality(slug: str, rows) -> dict:
     cfg = G.load_config(slug)
     valid = [r for r in rows if r.get("ok")]
-    up = _unprompted(valid)
+    up = _visibility(valid, cfg)
     failed = [r for r in rows if not r.get("ok")]
     expected = [p for p in cfg.get("platforms", []) if p in S.PROVIDERS and S.questions_for(cfg, p)]
     actual = {r.get("platform") for r in valid}
@@ -82,15 +82,20 @@ def sample_quality(slug: str, rows) -> dict:
     if incomplete:
         reasons.append("部分引擎尚未完成当前问题库")
     if len(up) < 30:
-        reasons.append(f"仅 {len(up)} 条有效无提示样本，少量答案变化就会明显影响比例")
+        reasons.append(f"仅 {len(up)} 条有效选型样本，少量答案变化就会明显影响比例")
     return {"attempted": len(rows), "successful": len(valid), "failed": len(failed),
-            "unprompted": len(up), "missing_platforms": missing,
+            "unprompted": len(_unprompted(valid)), "visibility": len(up),
+            "content": len(_unprompted(valid)) - len(up), "missing_platforms": missing,
             "provisional": bool(failed or missing or incomplete or len(up) < 30),
             "warnings": reasons}
 
 
 def _unprompted(rows):
     return [r for r in rows if not r.get("brand_in_question")]
+
+
+def _visibility(rows, cfg):
+    return [r for r in rows if S.visibility_sample(r, cfg)]
 
 
 def _cite_share(rows, own) -> tuple[float | None, int, int]:
@@ -121,10 +126,11 @@ def health(slug: str, bp: dict | None, factcheck: list, rows_latest) -> dict:
     cfg = G.load_config(slug)
     own = _own_host(cfg)
     up = _unprompted(rows_latest)
+    vis = _visibility(rows_latest, cfg)
     # 无自有网站时「引用官网率」无从谈起——记 None（不适用），
     # 由权重重整摊到其余维度，绝不退化成 0 假装"一次都没被引用"
     subs: dict[str, float | None] = {
-        "mention": _mention(up),
+        "mention": _mention(vis),
         "cite": _cite_share(up, own)[0] if G.has_site(cfg) else None,
         "channel": None, "content": None, "fact": None,
     }
@@ -150,7 +156,7 @@ def health(slug: str, bp: dict | None, factcheck: list, rows_latest) -> dict:
 def _verdict(m, own_cited, peers) -> str:
     """peers：本期同市场其他平台的提及率。「最好」只在可比较且严格领先时说。"""
     if m is None:
-        return "本期无样本"
+        return "本期无选型样本"
     if m == 0:
         return "完全不可见——先看该引擎偏好的阵地缺什么"
     vals = [m] + [p for p in peers if p is not None]
@@ -189,17 +195,18 @@ def engines(slug: str, rows_latest, metrics: dict | None) -> list[dict]:
     for r in rows_latest:
         by.setdefault(r["platform"], []).append(r)
     mkt = {p: rs[0].get("market", "cn") for p, rs in by.items()}
-    ment = {p: _mention(_unprompted(rs)) for p, rs in by.items()}
+    ment = {p: _mention(_visibility(rs, cfg)) for p, rs in by.items()}
     out = []
     for plat, rs in by.items():
         up = _unprompted(rs)
+        vis = _visibility(rs, cfg)
         m = ment[plat]
-        ranks = [r["analysis"]["brand_rank"] for r in up
+        ranks = [r["analysis"]["brand_rank"] for r in vis
                  if r["analysis"]["brand_mentioned"] and r["analysis"]["brand_rank"]]
         share, mine, total = _cite_share(up, own)
         meta = (metrics or {}).get("platforms", {}).get(plat, {})
         # 样本回放：优先取「无提示且被提及」的一条真实样本
-        ex = next((r for r in up if r["analysis"]["brand_mentioned"]), up[0] if up else (rs[0] if rs else None))
+        ex = next((r for r in vis if r["analysis"]["brand_mentioned"]), vis[0] if vis else (up[0] if up else (rs[0] if rs else None)))
         example = None
         if ex:
             ans = ex.get("answer", "")
@@ -221,14 +228,15 @@ def engines(slug: str, rows_latest, metrics: dict | None) -> list[dict]:
             "platform": plat, "label": meta.get("label", plat),
             "market": rs[0].get("market", "cn"),
             "searched": any(r.get("search_enabled") for r in rs),
-            "samples": len(up), "mention": round(m, 3) if m is not None else None,
+            "samples": len(vis), "content_samples": len(up) - len(vis),
+            "mention": round(m, 3) if m is not None else None,
             "pos_median": _median(ranks),
             "cite_share": round(share, 3) if share is not None else None,
             "cite_counts": [mine, total],
             "top_sources": list((meta.get("top_cited_domains") or {}).keys())[:4],
             "avg_ms": lat[len(lat) // 2] if lat else None,  # 中位耗时，抗超时长尾
             "neg_n": sum(1 for r in up if r["analysis"].get("negative_cues")),
-            "brand_dist": _brand_dist(up)[:8],
+            "brand_dist": _brand_dist(vis)[:8],
             "verdict": _verdict(m,
                                 any(r["analysis"].get("own_domain_cited") for r in rs),
                                 [ment[p] for p in by if p != plat and mkt[p] == mkt[plat]]),
@@ -243,7 +251,7 @@ def engines(slug: str, rows_latest, metrics: dict | None) -> list[dict]:
 def competitors(slug: str, rows_latest) -> dict:
     cfg = G.load_config(slug)
     comps = cfg.get("competitors", [])
-    up = _unprompted(rows_latest)
+    up = _visibility(rows_latest, cfg)
     bym = {"cn": [r for r in up if r.get("market", "cn") == "cn"],
            "global": [r for r in up if r.get("market") == "global"]}
 
@@ -354,7 +362,7 @@ def _diagnose(m, rank_med, rival, rival_rate, neg_n):
         return {"type": "竞品主导", "sev": "P0",
                 "detail": f"你 0%，{rival} 出现率 {round(rival_rate * 100)}%——看它被谁引用"}
     if m == 0:
-        return {"type": "完全缺席", "sev": "P1", "detail": "无提示样本中从未被提及"}
+        return {"type": "完全缺席", "sev": "P1", "detail": "选型样本中从未被提及"}
     if rank_med and rank_med > 3:
         return {"type": "排名靠后", "sev": "P2",
                 "detail": f"被提及但位次中位 {rank_med}——内容要争首推理由"}
@@ -416,13 +424,14 @@ def questions(slug: str, rows_latest, bp: dict | None) -> list[dict]:
         if any(r.get("brand_in_question") for r in rs):
             return True
         text = (q.get("text") or "").lower()
-        return any(n and n.lower() in text for n in names)
+        return q.get("scope") == "probe" or any(n and n.lower() in text for n in names)
 
     out = []
     for q in cfg.get("questions", []):
-        rs = byq.get(q.get("id"), [])
+        rs = [r for r in byq.get(q.get("id"), []) if r.get("question") == q.get("text")]
         m = _mention(rs)
         probe = is_probe(q, rs)
+        visibility = not probe and S.visibility_question(q.get("text", ""), cfg, q.get("id"))
         ranks = [r["analysis"]["brand_rank"] for r in rs
                  if r["analysis"]["brand_mentioned"] and r["analysis"].get("brand_rank")]
         rivals: dict[str, int] = {}
@@ -433,16 +442,19 @@ def questions(slug: str, rows_latest, bp: dict | None) -> list[dict]:
         neg_n = sum(1 for r in rs if r["analysis"].get("negative_cues"))
         out.append({"id": q.get("id"), "text": q.get("text", ""), "group": q.get("group", ""),
                     "market": q.get("market", "cn"),
-                    "brand_probe": probe,
-                    "mention": round(m, 2) if m is not None else None,
+                     "brand_probe": probe,
+                     "visibility": visibility,
+                     "mention": round(m, 2) if m is not None and (visibility or probe) else None,
+                     "observed_mention": round(m, 2) if m is not None else None,
                     "samples": len(rs),
-                    "diagnosis": None if probe else _diagnose(
+                     "diagnosis": None if not visibility else _diagnose(
                         m, _median(ranks),
                         top[0] if top else None,
                         (top[1] / len(rs)) if top and rs else 0, neg_n),
                     "content": status.get(q.get("id"), "缺口")})
     # 未提及 + 无内容的排最前——这就是选题池；probe 题单独归「品牌认知」，不参与缺口排序
-    out.sort(key=lambda x: (x["brand_probe"], (x["mention"] or 0), x["content"] == "已成稿"))
+    out.sort(key=lambda x: (x["brand_probe"], not x["visibility"],
+                            (x["mention"] or 0), x["content"] == "已成稿"))
     return out
 
 
@@ -461,7 +473,7 @@ def trend(slug: str) -> list[dict]:
             continue
         h = health(slug, bp, fc, rows)   # 阵地/内容用当前值近似——历史蓝图未存档
         up = _unprompted(rows)
-        mention = _mention(up)
+        mention = _mention(_visibility(rows, cfg))
         share = _cite_share(up, own)[0]
         pts.append({"date": f.stem, "health": h["score"],
                     "mention": round(mention, 3) if mention is not None else None,
@@ -477,7 +489,7 @@ def question_delta(slug: str) -> list[dict]:
         return []
     def per_q(path):
         out = {}
-        for r in _unprompted(_rows(path)):
+        for r in _visibility(_rows(path), G.load_config(slug)):
             out.setdefault(r.get("question_id"), []).append(r)
         return {k: v for k, v in out.items() if k}
     before, after = per_q(files[-2]), per_q(files[-1])
@@ -515,8 +527,8 @@ def build(slug: str) -> dict:
     cfg = G.load_config(slug)
     metrics = {"platforms": S.aggregate(rows_latest, cfg)}
     quality = sample_quality(slug, S.read_sample_rows(files[-1]) if files else [])
-    before = _unprompted(_rows(files[-2])) if len(files) > 1 else []
-    after = _unprompted(rows_latest)
+    before = _visibility(_rows(files[-2]), cfg) if len(files) > 1 else []
+    after = _visibility(rows_latest, cfg)
     can_compare = comparable(before, after) and not quality["provisional"]
     if len(files) > 1:
         can_compare = can_compare and not sample_quality(slug, S.read_sample_rows(files[-2]))["provisional"]
@@ -533,7 +545,7 @@ def build(slug: str) -> dict:
         "health": health(slug, bp, fc, rows_latest),
         "engines": engines(slug, rows_latest, metrics),
         "question_groups": question_groups(qs),
-        "brand_dist": {m: _brand_dist([r for r in _unprompted(rows_latest)
+        "brand_dist": {m: _brand_dist([r for r in _visibility(rows_latest, cfg)
                                        if r.get("market", "cn") == m])
                        for m in ("cn", "global")},
         "competitors": competitors(slug, rows_latest),

@@ -94,9 +94,9 @@ class TestNoSiteMode(unittest.TestCase):
         0 会被读成「一次都没被引用」，那是编数。"""
         import sample as S
         cfg = {"brand": {"name": "商品", "site": "", "aliases": []}, "competitors": [],
-               "questions": [{"id": "q001", "text": "有哪些好用的绿茶", "group": "推荐"}]}
+               "questions": [{"id": "q001", "text": "有哪些好用的绿茶品牌", "group": "推荐"}]}
         rows = [{"platform": "deepseek", "market": "cn", "question_id": "q001",
-                 "question": "有哪些好用的绿茶", "ok": True,
+                 "question": "有哪些好用的绿茶品牌", "ok": True,
                  "analysis": {"brand_mentioned": False, "brand_rank": 0, "candidates": [],
                               "competitors_mentioned": [], "cited_domains": ["x.com"],
                               "own_domain_cited": False, "answer_chars": 100}}]

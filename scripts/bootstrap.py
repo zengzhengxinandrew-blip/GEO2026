@@ -18,6 +18,7 @@ import json
 import re
 
 import geolib as G
+import sample as S
 
 GROUPS = ["推荐", "比较", "替代", "价格", "风险", "品牌验证", "场景"]
 
@@ -127,6 +128,7 @@ QUESTION_PROMPT = """你是 GEO 分析师。根据下面的品牌信息，设计
 
 品牌：{name}
 品类：{industry}
+官网确认的产品/能力：{products}
 目标用户：{target_users}
 一句话定义：{definition}
 
@@ -140,10 +142,16 @@ QUESTION_PROMPT = """你是 GEO 分析师。根据下面的品牌信息，设计
    - "both"：只给品牌验证类（这类点名了品牌）
 4. 绝大多数问题**不要出现品牌名**——考的是 AI 会不会主动想到你。只有品牌验证组可以点名
 5. 市场范围：{market_hint}
+6. 只围绕官网确认的产品/能力及其目标用户出题。不要把相邻行业或用途当成品牌业务；例如官网没有冷库业务，就不要出冷库选型题。
+7. 把问题分成两种用途：
+   - 选型题：用户明确要找、推荐、比较品牌/厂家/供应商/产品；AI 答案自然有列出品牌的机会。这类才用于「品牌提及率」。推荐/比较/替代组以选型题为主。
+   - 内容题：问怎么做、技术要求、注意事项、规范或风险；即使品牌没出现也不代表品牌不可见。场景/风险组可保留这类题，用于内容规划，不计入品牌提及率。
+   不要把「围护系统一般怎么弄」「有什么特殊要求」「要注意什么」这样的知识题伪装成推荐题。价格题若只是问价格构成而非选供应商，也是内容题。
+8. 每题的 scope 填 visibility 或 content；品牌验证题填 probe。避免不同组里换几个字重复出同一道题。
 
 输出 JSON（不要任何解释）：
 
-{{"questions":[{{"id":"q001","group":"推荐","market":"cn","text":"问题原文"}}]}}
+{{"questions":[{{"id":"q001","group":"推荐","market":"cn","scope":"visibility","text":"问题原文"}}]}}
 
 编号规则：国内题 q001 起，海外题 q101 起，通用题 q901 起。
 """
@@ -156,6 +164,7 @@ def question_bank(brand: dict, market: str) -> list[dict]:
     G.info("  设计问题库…")
     data = _ask_json(QUESTION_PROMPT.format(
         name=brand.get("name", ""), industry=brand.get("industry", ""),
+        products="、".join(brand.get("products") or []),
         target_users=brand.get("target_users", ""), definition=brand.get("definition", ""),
         market_hint=hint))
     qs = (data or {}).get("questions") or []
@@ -166,9 +175,17 @@ def question_bank(brand: dict, market: str) -> list[dict]:
         if not t or t in seen or (market != "both" and mk not in (market, "both")):
             continue
         seen.add(t)
+        scope = q.get("scope")
+        # LLM 标注仅作候选；提及率资格还需符合可复现的选型问法规则。
+        if scope == "visibility" and not S.visibility_question(t):
+            scope = "content"
+        group = q.get("group") if q.get("group") in GROUPS else "推荐"
+        if group == "品牌验证":
+            scope = "probe"
         out.append({"id": q.get("id") or f"q{len(out)+1:03d}",
-                    "group": q.get("group") if q.get("group") in GROUPS else "推荐",
-                    "market": mk, "text": t})
+                    "group": group, "market": mk, "text": t,
+                    "scope": scope if scope in ("visibility", "content", "probe") else
+                             ("visibility" if S.visibility_question(t) else "content")})
     return out
 
 

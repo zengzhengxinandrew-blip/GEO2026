@@ -71,6 +71,17 @@ class TestHealthCite(Base):
         h = A.health("demo", None, [], rows)
         self.assertEqual(h["subs"]["cite"], 0.0)
 
+    def test_content_question_not_in_mention_but_still_in_citation(self):
+        self.make_project()
+        rows = [
+            row(mentioned=True, cites=["other.com"]),
+            row(qid="how", question="高校实验室改造洁净室，围护系统一般怎么弄？",
+                mentioned=False, cites=["acme.com"]),
+        ]
+        h = A.health("demo", None, [], rows)
+        self.assertEqual(h["subs"]["mention"], 1.0)
+        self.assertEqual(h["subs"]["cite"], 0.5)
+
 
 class TestVerdict(Base):
     def test_single_platform_no_best_claim(self):
