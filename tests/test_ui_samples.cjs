@@ -87,3 +87,30 @@ test('sample list fetch bypasses browser cache and keeps fresh success metadata'
   assert.equal(row.brand_rank, 1);
   assert.deepEqual(Array.from(row.competitors), ['竞品A']);
 });
+
+test('date delete button shows full-day count even when list has filters', () => {
+  const box = setup(null);
+  box.ME = {role: 'admin'};
+  vm.runInContext("SMPF.date='2026-10-01';SMPF.platform='kimi';SMP={rows:[],total:1,dates:['2026-10-01'],date_counts:{'2026-10-01':12},platforms:['kimi']}", box);
+  assert.ok(box.vSamples().includes('删除 2026-10-01 全部 12 条'));
+});
+
+test('date delete requires typed date and sends exact day with expected count', async () => {
+  const box = setup(null);
+  box.ME = {role: 'admin'};
+  vm.runInContext("SMPF.date='2026-10-01';SMP={date_counts:{'2026-10-01':12}}", box);
+  box.confirm = () => true;
+  box.prompt = () => 'wrong';
+  let sent;
+  box.post = async (url, body) => {sent = {url, body};return {ok: true, deleted_count: 12}};
+  box.load = async () => {};
+  box.loadSamples = async () => {};
+  await box.deleteSampleDate();
+  assert.equal(sent, undefined);
+  box.prompt = () => '2026-10-01';
+  await box.deleteSampleDate();
+  assert.equal(sent.url, '/api/sample-date/demo');
+  assert.equal(sent.body.date, '2026-10-01');
+  assert.equal(sent.body.expected_count, 12);
+  assert.equal(vm.runInContext('SMPF.date', box), '');
+});

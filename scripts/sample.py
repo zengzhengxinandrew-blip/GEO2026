@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date as calendar_date
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -864,10 +865,13 @@ def _sample_files(slug: str) -> list[Path]:
 def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
                  flag: str = "", limit: int = 300) -> dict:
     """列出样本元数据（不含全文，全文按需单取）。flag: review=待复核 / edited=人工改过。"""
-    rows, dates, plats = [], set(), set()
+    rows, dates, plats, date_counts = [], set(), set(), {}
     cfg = G.load_config(slug)
     for f in _sample_files(slug):
-        for r in read_sample_rows(f):
+        file_rows = read_sample_rows(f)
+        dates.add(f.stem)
+        date_counts[f.stem] = len(file_rows)
+        for r in file_rows:
             d = r.get("date") or f.stem
             dates.add(d)
             plats.add(r.get("platform"))
@@ -907,7 +911,37 @@ def list_samples(slug: str, date: str = "", platform: str = "", qid: str = "",
             })
     rows.sort(key=lambda x: (x["date"], x["platform"], x["question_id"] or ""), reverse=True)
     return {"rows": rows[:limit], "total": len(rows),
-            "dates": sorted(dates, reverse=True), "platforms": sorted(p for p in plats if p)}
+            "dates": sorted(dates, reverse=True), "date_counts": date_counts,
+            "platforms": sorted(p for p in plats if p)}
+
+
+def delete_sample_date(slug: str, date: str, expected_count: int) -> dict:
+    """仅删除指定日的原始样本与派生指标；用显示数量防止过期页面误删。"""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date or ""):
+        return {"ok": False, "error": "日期格式必须是 YYYY-MM-DD"}
+    try:
+        calendar_date.fromisoformat(date)
+    except ValueError:
+        return {"ok": False, "error": "日期无效"}
+    if type(expected_count) is not int or expected_count < 0:
+        return {"ok": False, "error": "缺少有效的样本数量，请刷新页面后重试"}
+    with G.project_lock(slug):
+        pdir = G.project_dir(slug)
+        source = pdir / "samples" / f"{date}.jsonl"
+        if not source.is_file():
+            return {"ok": False, "error": "该日期的样本文件已不存在，请刷新页面"}
+        logical_count = len(read_sample_rows(source))
+        if logical_count != expected_count:
+            return {"ok": False, "error": "样本数量已变化，请刷新页面后重新确认"}
+        metrics = pdir / "metrics" / f"{date}.json"
+        metrics.unlink(missing_ok=True)
+        try:
+            source.unlink()
+        except OSError:
+            # 原始样本还在时，恢复派生指标，避免下一次读取用到不一致状态。
+            recompute_metrics(slug, G.load_config(slug), date)
+            raise
+    return {"ok": True, "date": date, "deleted_count": logical_count}
 
 
 def get_sample(slug: str, key: str) -> dict | None:

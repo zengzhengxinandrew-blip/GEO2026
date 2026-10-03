@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 from pathlib import Path
@@ -86,6 +87,72 @@ class SampleIntegrity(unittest.TestCase):
         self.assertIsNotNone(S.get_sample("demo", key))
         self.assertTrue(S.patch_sample("demo", key, {"delete": True})["ok"])
         self.assertEqual(S.list_samples("demo")["total"], 0)
+
+    def test_delete_one_date_removes_raw_and_metrics_without_touching_other_days(self):
+        earlier = self.path.with_name("2026-09-30.jsonl")
+        G.write_jsonl(earlier, [record(date="2026-09-30", mentioned=True)])
+        G.write_jsonl(self.path, [record(), record(), record(1)])
+        S.recompute_metrics("demo", CFG, "2026-09-30")
+        S.recompute_metrics("demo", CFG, "2026-10-01")
+        listing = S.list_samples("demo", platform="kimi")
+        self.assertEqual(listing["date_counts"]["2026-10-01"], 2)
+        self.assertEqual(A.build("demo")["latest_date"], "2026-10-01")
+
+        deleted = S.delete_sample_date("demo", "2026-10-01", 2)
+        self.assertEqual(deleted["deleted_count"], 2)
+        self.assertFalse(self.path.exists())
+        self.assertFalse((self.pdir / "metrics" / "2026-10-01.json").exists())
+        self.assertTrue(earlier.exists())
+        self.assertTrue((self.pdir / "metrics" / "2026-09-30.json").exists())
+        self.assertEqual(A.build("demo")["latest_date"], "2026-09-30")
+        self.assertEqual([p["date"] for p in A.build("demo")["trend"]], ["2026-09-30"])
+
+    def test_date_delete_rejects_invalid_date_and_stale_count(self):
+        G.write_jsonl(self.path, [record(), record(1)])
+        for date_value in ("", "../2026-10-01", "2026-02-30", "2026-10-01.jsonl"):
+            with self.subTest(date=date_value):
+                self.assertFalse(S.delete_sample_date("demo", date_value, 2)["ok"])
+        self.assertFalse(S.delete_sample_date("demo", "2026-10-01", 1)["ok"])
+        self.assertTrue(self.path.exists())
+
+    def test_http_date_delete_requires_admin_confirmation(self):
+        G.write_jsonl(self.path, [record()])
+        with mock.patch.object(DB.Handler, "_auth", return_value=True), \
+             mock.patch.object(DB.Handler, "_admin", return_value=True):
+            server = DB.ThreadingHTTPServer(("127.0.0.1", 0), DB.Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                def send(confirmation):
+                    data = json.dumps({"date": "2026-10-01", "confirm_date": confirmation,
+                                       "expected_count": 1}).encode()
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{server.server_port}/api/sample-date/demo",
+                        data=data, headers={"Content-Type": "application/json"})
+                    try:
+                        with urllib.request.urlopen(req) as resp:
+                            return resp.status, json.loads(resp.read())
+                    except urllib.error.HTTPError as exc:
+                        with exc:
+                            return exc.code, json.loads(exc.read())
+
+                status, result = send("wrong")
+                self.assertEqual(status, 400)
+                self.assertFalse(result["ok"])
+                self.assertTrue(self.path.exists())
+                with mock.patch.object(DB.J, "running_for", return_value="busy"):
+                    status, result = send("2026-10-01")
+                self.assertEqual(status, 409)
+                self.assertIn("正在运行", result["error"])
+                self.assertTrue(self.path.exists())
+                status, result = send("2026-10-01")
+                self.assertEqual(status, 200)
+                self.assertTrue(result["ok"])
+                self.assertFalse(self.path.exists())
+            finally:
+                server.shutdown()
+                thread.join()
+                server.server_close()
 
     def test_review_edits_latest_attempt(self):
         G.write_jsonl(self.path, [record(mentioned=True), record()])

@@ -884,6 +884,19 @@ class Handler(BaseHTTPRequestHandler):
                 job = J.start(body["slug"], body["action"], body.get("params") or {})
                 return self._json({"ok": True, "job": job})
 
+            if p.startswith("/api/sample-date/"):
+                if not self._admin():
+                    return
+                import sample as S
+                slug = p[len("/api/sample-date/"):]
+                date_value = str(body.get("date") or "")
+                if body.get("confirm_date") != date_value:
+                    return self._json({"ok": False, "error": "请完整输入所选日期以确认删除"}, 400)
+                if J.running_for(slug):
+                    return self._json({"ok": False, "error": "项目任务正在运行，请结束后再删除样本"}, 409)
+                result = S.delete_sample_date(slug, date_value, body.get("expected_count"))
+                return self._json(result, 200 if result.get("ok") else 409)
+
             if p.startswith("/api/sample/"):
                 import sample as S
                 slug = p[len("/api/sample/"):]

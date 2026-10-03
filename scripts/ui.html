@@ -3025,6 +3025,7 @@ function vSamples(){
       ${sel('date',SMPF.date,[['','全部日期']].concat((SMP.dates||[]).map(d=>[d,d])),'日期')}
       ${sel('platform',SMPF.platform,[['','全部引擎']].concat((SMP.platforms||[]).map(p=>[p,p])),'引擎')}
       ${sel('flag',SMPF.flag,[['','全部样本'],['review','仅待复核'],['edited','仅人工改过']],'筛选')}
+      ${SMPF.date&&ME&&ME.role==='admin'&&Object.hasOwn(SMP.date_counts||{},SMPF.date)?`<button type="button" class="btn btn-ghost" style="font-size:12px;color:var(--error)" onclick="deleteSampleDate()">删除 ${esc(SMPF.date)} 全部 ${SMP.date_counts[SMPF.date]} 条</button>`:''}
       <span class="small" style="color:var(--t600);margin-left:auto">共 ${SMP.total||0} 条
         ${review?` · <span style="color:var(--a300)">${review} 条待复核</span>`:''}
         ${edited?` · ${edited} 条已人工核对`:''}</span>
@@ -3132,6 +3133,18 @@ async function delSample(key){
   const r=await post('/api/sample/'+SLUG,{key,patch:{delete:true}});
   if(!r.ok){toast(r.error||'删除失败','err');return}
   toast('已删除，指标已重算');closeModal();SMP=null;await load(SLUG,true);loadSamples();
+}
+async function deleteSampleDate(){
+  const date=SMPF.date,count=(SMP&&SMP.date_counts||{})[date];
+  if(!date||!Number.isInteger(count)){toast('请先选择一个有效日期并刷新样本库','err');return}
+  const warning=`将永久删除 ${date} 的全部 ${count} 条样本（包括未显示的其他引擎、失败记录及重复历史行），并删除该日指标。历史报告与交付包不会自动删除。`;
+  if(!confirm(warning))return;
+  const typed=prompt(`再次确认：请输入日期 ${date} 才会删除`, '');
+  if(typed!==date){if(typed!==null)toast('日期不一致，未删除','err');return}
+  const r=await post('/api/sample-date/'+SLUG,{date,confirm_date:typed,expected_count:count});
+  if(!r.ok){toast(r.error||'删除失败，请刷新页面后重试','err');return}
+  toast(`已删除 ${date} 的 ${r.deleted_count} 条样本及当日指标`);
+  SMPF.date='';invalidateSamples();await load(SLUG,true);loadSamples();
 }
 
 /* ===================== 框架 ===================== */
