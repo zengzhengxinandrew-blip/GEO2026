@@ -15,8 +15,11 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 import geolib as G
@@ -229,38 +232,39 @@ def gen_faq_block(slug: str, lang: str = "zh") -> str:
 # ---------------------------------------------------------------- 内容大纲
 
 OUTLINE_TMPL = {
-    "定义型": ["什么是 {topic}（一句定义 + 展开）", "{topic} 包含哪几部分", "{topic} 的关键数字（表格，每行带来源）",
-               "{topic} 和 {alt} 有什么区别（对比表）", "{topic} 适合谁、不适合谁",
-               "怎么开始用 {topic}（编号步骤）", "常见问题", "参考来源"],
-    "对比型": ["结论先行：谁适合选哪个", "对比维度与口径说明", "核心对比表（同口径 6–10 个维度）",
-               "各自的局限（必须写自己的短板）", "按场景怎么选（决策树）", "价格与总拥有成本",
+    "定义型": ["先回答目标问题：{question}", "适用范围与关键概念", "核心要点与条件限制",
+               "可核验的数字事实（逐项标注来源）", "不同方案及其取舍（对比表）",
+               "实际核验或操作步骤", "常见问题", "参考来源与核验日期"],
+    "对比型": ["先回答目标问题：{question}", "对比对象、维度与口径说明", "核心对比表（同口径）",
+               "各自的局限与不适用条件", "按场景怎么选（决策清单）", "价格与总拥有成本",
                "常见问题", "参考来源与核验日期"],
-    "榜单型": ["评选方法与数据来源（利益披露）", "总览榜单表", "逐个点评（每个含定位/优势/局限/适合谁）",
-               "怎么根据自己情况选", "常见问题", "参考来源"],
-    "教程型": ["这篇能解决什么问题", "开始前需要准备什么", "分步操作（编号 + 截图位）",
-               "常见报错与排查", "进阶技巧", "相关概念解释", "常见问题", "参考来源"],
+    "榜单型": ["先回答目标问题：{question}", "候选范围、评选方法与利益披露", "候选供应商总览表",
+               "逐项分析（能力、证据、局限、适合谁）", "不同使用场景怎么选", "核验资质和询价步骤",
+               "常见问题", "参考来源与核验日期"],
+    "教程型": ["目标场景与问题边界：{question}", "开始前需要确认的条件", "分步操作与验收点",
+               "常见错误与排查", "不同条件下的方案对比", "可核验的数据与案例",
+               "常见问题", "参考来源与核验日期"],
+    "风险型": ["先回答风险问题：{question}", "适用场景与边界条件", "题目涉及的风险点逐项拆解（条件、后果、证据）",
+               "题目涉及的要求逐项核验（不引入无关风险）", "不达标的可能后果与不确定性",
+               "材料、设计、施工和维护的检查步骤", "可选措施及其局限（对比表）", "常见问题与参考标准来源"],
 }
 
 GROUP2TYPE = {"推荐": "榜单型", "比较": "对比型", "替代": "对比型", "价格": "定义型",
-              "风险": "定义型", "品牌验证": "定义型", "场景": "教程型"}
+               "风险": "风险型", "品牌验证": "定义型", "场景": "教程型"}
 
 
 def gen_outlines(slug: str) -> list[dict]:
     cfg = G.load_config(slug)
     f = parse_facts(slug)
-    b = cfg["brand"]
-    comps = [c["name"] for c in cfg.get("competitors", [])
-             if c.get("confirmed") is not False]
     out = []
     for q in cfg.get("questions", []):
         typ = GROUP2TYPE.get(q.get("group", ""), "定义型")
         mk = q.get("market", cfg.get("market", "cn"))
-        alt = comps[0] if comps else ("竞品" if mk == "cn" else "alternatives")
-        secs = [s.format(topic=b["name"], alt=alt) for s in OUTLINE_TMPL[typ]]
+        secs = [s.format(question=q["text"].rstrip("？?").strip()) for s in OUTLINE_TMPL[typ]]
         out.append({
             "question_id": q.get("id"), "market": mk, "type": typ,
             "target_question": q["text"],
-            "title_candidates": _titles(q["text"], b["name"], mk),
+            "title_candidates": _titles(q["text"], cfg["brand"]["name"], mk),
             "sections": secs,
             "requirements": {
                 "min_words": 1200 if typ in ("对比型", "榜单型") else 1000,
@@ -271,6 +275,137 @@ def gen_outlines(slug: str) -> list[dict]:
             "facts_to_use": [n["fact"] + "：" + n["value"] for n in f.get("numbers", [])[:5]],
         })
     return out
+
+
+def question_fingerprint(question: str) -> str:
+    """把题目文本绑定到资产；题号被复用时旧资产不能冒充新题。"""
+    return hashlib.sha256(question.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def draft_fingerprint(text: str) -> str | None:
+    m = re.search(r"<!-- geo-question-sha256:([0-9a-f]{16}) -->", text[:500])
+    return m.group(1) if m else None
+
+
+def bind_question_content(text: str, question: str) -> str:
+    """成稿只保留一个题目指纹，避免由初稿复制来的旧标记相互矛盾。"""
+    clean = re.sub(r"(?m)^<!-- geo-question-sha256:[0-9a-f]{16} -->\r?\n?", "", text)
+    return f"<!-- geo-question-sha256:{question_fingerprint(question)} -->\n{clean}"
+
+
+def outline_target(text: str) -> str | None:
+    first = text.splitlines()[0].strip() if text else ""
+    prefix = "# 内容大纲 · "
+    return first[len(prefix):].strip() if first.startswith(prefix) else None
+
+
+def render_outline(o: dict) -> str:
+    """单一大纲渲染入口；批量生成和工作台单题刷新共用。"""
+    body = [f"# 内容大纲 · {o['target_question']}", "",
+            f"- 目标问题 ID：`{o['question_id']}` ｜ 市场：{o['market']} ｜ 类型：{o['type']}",
+            "", "## 标题候选（标题必须回应目标问题）", ""]
+    body += [f"{i+1}. {t}" for i, t in enumerate(o["title_candidates"])]
+    body += ["", "## 章节骨架", ""]
+    body += [f"{i+1}. {s}" for i, s in enumerate(o["sections"])]
+    body += ["", "## 硬性要求", "",
+             f"- 正文 ≥ {o['requirements']['min_words']} 词，H2 ≥ {o['requirements']['min_h2']} 个",
+             f"- 必备抽取块：{'、'.join(o['requirements']['must_have_blocks'])}",
+             f"- 列表密度 {o['requirements']['list_density']}",
+             f"- 证据：{o['requirements']['evidence']}", ""]
+    if o["facts_to_use"]:
+        body += ["## 可用的已核实事实（仅选与本题有关的）", ""]
+        body += [f"- {x}" for x in o["facts_to_use"]] + [""]
+    return "\n".join(body)
+
+
+def _outline_path(slug: str, qid: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", qid or ""):
+        raise ValueError("非法问题编号")
+    return G.project_dir(slug) / "assets" / "outlines" / f"{qid}.md"
+
+
+def _backup_asset(slug: str, path: Path, kind: str) -> str:
+    bdir = G.project_dir(slug) / ".asset.bak" / kind
+    bdir.mkdir(parents=True, exist_ok=True)
+    backup = bdir / f"{path.stem}-{datetime.now():%Y%m%d-%H%M%S-%f}{path.suffix}"
+    shutil.copy2(path, backup)
+    return str(backup)
+
+
+def _write_outline(slug: str, o: dict, *, force: bool = False) -> dict:
+    path = _outline_path(slug, o["question_id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = render_outline(o)
+    backup = None
+    if path.exists():
+        old = path.read_text("utf-8", "replace")
+        if old == body:
+            return {"path": str(path), "status": "unchanged", "backup": None}
+        if not force and outline_target(old) == o["target_question"]:
+            # 可能是人工改过的大纲；批量任务不得把它覆盖。
+            return {"path": str(path), "status": "preserved", "backup": None}
+        backup = _backup_asset(slug, path, "outlines")
+    path.write_text(body, "utf-8")
+    return {"path": str(path), "status": "replaced" if backup else "created", "backup": backup}
+
+
+def refresh_outline(slug: str, qid: str) -> dict:
+    """显式单题刷新：始终备份不同的旧文件，绝不删除人工内容。"""
+    matches = [o for o in gen_outlines(slug) if o["question_id"] == qid]
+    if len(matches) != 1:
+        raise ValueError("问题不存在或编号重复，无法生成对应大纲")
+    return _write_outline(slug, matches[0], force=True)
+
+
+def locate_question_assets(slug: str, qid: str, question: str) -> dict:
+    """题目资产的唯一归属口径，供工作台和蓝图统计共用。"""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", qid or ""):
+        return {"sources": [], "stale": []}
+    pdir = G.project_dir(slug)
+    expected = question_fingerprint(question)
+    sources, stale = [], []
+    cdir = pdir / "content"
+    if cdir.exists():
+        for f in sorted(cdir.glob("*.md")):
+            head = f.read_text("utf-8", "replace")[:800]
+            tagged = bool(re.search(rf"<!--\s*目标问题\s+{re.escape(qid)}\s*-->", head))
+            named = f.name.startswith(f"{qid}-")
+            legacy = bool(re.search(rf"(?<![A-Za-z0-9_-]){re.escape(qid)}(?![A-Za-z0-9_-])",
+                                    head + " " + f.stem))
+            if not (tagged or named or legacy):
+                continue
+            fp = draft_fingerprint(head)
+            item = {"kind": "content", "path": f.name, "unverified": fp is None}
+            (stale if fp and fp != expected else sources).append(item)
+    for kind, sub in (("draft", "drafts"), ("outline", "outlines")):
+        f = pdir / "assets" / sub / f"{qid}.md"
+        if not f.exists():
+            continue
+        body = f.read_text("utf-8", "replace")
+        if kind == "outline":
+            valid, unverified = outline_target(body) == question, False
+        else:
+            fp = draft_fingerprint(body)
+            valid, unverified = fp is None or fp == expected, fp is None
+        item = {"kind": kind, "path": f"{sub}/{qid}.md", "unverified": unverified}
+        (sources if valid else stale).append(item)
+    sources.sort(key=lambda s: bool(s["unverified"]))
+    return {"sources": sources, "stale": stale}
+
+
+def _outline_for_draft(slug: str, outline: dict) -> dict:
+    """有同题人工修改大纲时，初稿应按实际保存的章节而非新模板写。"""
+    path = _outline_path(slug, outline["question_id"])
+    if not path.exists():
+        return outline
+    body = path.read_text("utf-8", "replace")
+    if outline_target(body) != outline["target_question"]:
+        return outline
+    match = re.search(r"^## 章节骨架\s*$(.*?)^## 硬性要求\s*$", body, re.M | re.S)
+    if not match:
+        return outline
+    sections = [s.strip() for s in re.findall(r"^\d+\.\s+(.+)$", match.group(1), re.M)]
+    return {**outline, "sections": sections} if sections else outline
 
 
 def _titles(question: str, brand: str, market: str) -> list[str]:
@@ -502,20 +637,10 @@ def run(slug: str, which: list[str] | None = None, with_draft: bool = False,
         d.mkdir(parents=True, exist_ok=True)
         outlines = gen_outlines(slug)
         for o in outlines:
-            body = [f"# 内容大纲 · {o['target_question']}", "",
-                    f"- 目标问题 ID：`{o['question_id']}` ｜ 市场：{o['market']} ｜ 类型：{o['type']}",
-                    "", "## 标题候选（对题性 r=0.432，标题必须含问题原词）", ""]
-            body += [f"{i+1}. {t}" for i, t in enumerate(o["title_candidates"])]
-            body += ["", "## 章节骨架", ""]
-            body += [f"{i+1}. {s}" for i, s in enumerate(o["sections"])]
-            body += ["", "## 硬性要求", "",
-                     f"- 正文 ≥ {o['requirements']['min_words']} 词，H2 ≥ {o['requirements']['min_h2']} 个",
-                     f"- 必备抽取块：{'、'.join(o['requirements']['must_have_blocks'])}",
-                     f"- 列表密度 {o['requirements']['list_density']}",
-                     f"- 证据：{o['requirements']['evidence']}", ""]
-            if o["facts_to_use"]:
-                body += ["## 可用的已核实事实", ""] + [f"- {x}" for x in o["facts_to_use"]] + [""]
-            (d / f"{o['question_id']}.md").write_text("\n".join(body), "utf-8")
+            result = _write_outline(slug, o)
+            o["asset_status"] = result["status"]
+            if result["status"] == "replaced":
+                G.info(f"  {o['question_id']} 旧大纲与当前题目不一致：已备份后重建")
         made.append(f"assets/outlines/（{len(outlines)} 份）")
         G.write_json(adir / "outlines" / "_index.json", outlines)
 
@@ -523,10 +648,25 @@ def run(slug: str, which: list[str] | None = None, with_draft: bool = False,
         d = adir / "drafts"
         d.mkdir(parents=True, exist_ok=True)
         for o in outlines[:draft_limit]:
+            qid = o["question_id"]
+            _outline_path(slug, qid)  # 统一校验问题编号，防止配置里的编号逃出资产目录
+            target = d / f"{qid}.md"
+            expected = question_fingerprint(o["target_question"])
+            if target.exists():
+                old_fp = draft_fingerprint(target.read_text("utf-8", "replace"))
+                if old_fp == expected:
+                    G.info(f"  {qid} 已有同题初稿，保留人工修改，跳过起草")
+                    continue
+                if old_fp is None:
+                    G.info(f"  {qid} 旧初稿缺少题目校验信息，保留原件；请人工核对")
+                    continue
             G.info(f"起草 {o['question_id']} · {o['target_question'][:30]}…")
-            text = draft(slug, o)
+            text = draft(slug, _outline_for_draft(slug, o))
             if text:
-                (d / f"{o['question_id']}.md").write_text(
+                if target.exists():
+                    _backup_asset(slug, target, "drafts")
+                target.write_text(
+                    f"<!-- geo-question-sha256:{expected} -->\n"
                     f"<!-- 初稿，需人工核实所有事实后再发布 · {G.today()} -->\n\n" + text, "utf-8")
                 made.append(f"assets/drafts/{o['question_id']}.md")
             else:

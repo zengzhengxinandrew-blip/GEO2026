@@ -152,20 +152,14 @@ def _facts_struct(slug: str):
 
 def workbench(slug: str, qid: str) -> dict:
     """内容工作台：定位某个问题现有的内容/草稿/大纲文件。"""
-    pdir = G.project_dir(slug)
+    import generate as GEN
+
     cfg = G.load_config(slug)
-    q = next((x for x in cfg.get("questions", []) if x.get("id") == qid), None)
-    sources = []
-    cdir = pdir / "content"
-    if cdir.exists():
-        for f in sorted(cdir.glob("*.md")):
-            if qid and qid in f.read_text("utf-8", "replace")[:800]:
-                sources.append({"kind": "content", "path": f.name})
-    for kind, sub in (("draft", "drafts"), ("outline", "outlines")):
-        f = pdir / "assets" / sub / f"{qid}.md"
-        if f.exists():
-            sources.append({"kind": kind, "path": f"{sub}/{qid}.md"})
-    return {"question": q, "sources": sources}
+    matches = [x for x in cfg.get("questions", []) if x.get("id") == qid]
+    q = matches[0] if len(matches) == 1 and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", qid or "") else None
+    if not q:
+        return {"question": None, "sources": [], "stale": []}
+    return {"question": q, **GEN.locate_question_assets(slug, qid, q["text"])}
 
 
 def _analytics(slug: str):
@@ -930,6 +924,16 @@ class Handler(BaseHTTPRequestHandler):
                 G.save_config(slug, cur)
                 return self._json({"ok": True})
 
+            if p.startswith("/api/workbench-outline/"):
+                import generate as GEN
+                slug = p[len("/api/workbench-outline/"):]
+                qid = str(body.get("qid") or "")
+                if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", qid):
+                    return self._json({"ok": False, "error": "非法问题编号"}, 400)
+                with G.project_lock(slug):
+                    result = GEN.refresh_outline(slug, qid)
+                return self._json({"ok": True, **result})
+
             if p.startswith("/api/facts/"):
                 slug = p[len("/api/facts/"):]
                 f = G.project_dir(slug) / "content" / "facts.md"
@@ -970,8 +974,17 @@ class Handler(BaseHTTPRequestHandler):
                 if ("/" in rel or "\\" in rel or ".." in rel or rel.startswith(".")
                         or not rel.endswith(".md") or len(rel) <= 3):
                     return self._json({"ok": False, "error": "文件名须是 .md，不能包含路径"}, 400)
+                content = str(body.get("text") or "")
+                if body.get("qid"):
+                    import generate as GEN
+                    qid = str(body["qid"])
+                    questions = [x for x in G.load_config(slug).get("questions", [])
+                                 if x.get("id") == qid]
+                    if len(questions) != 1:
+                        return self._json({"ok": False, "error": "目标问题不存在或编号重复"}, 400)
+                    content = GEN.bind_question_content(content, questions[0]["text"])
                 base.mkdir(parents=True, exist_ok=True)
-                (base / rel).write_text(body.get("text", ""), "utf-8")
+                (base / rel).write_text(content, "utf-8")
                 return self._json({"ok": True})
 
             if p == "/api/keys":

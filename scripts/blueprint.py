@@ -12,9 +12,8 @@
 
 from __future__ import annotations
 
-import re
-
 import geolib as G
+import generate as GEN
 
 # ---------------------------------------------------------------- 渠道库
 # national / position / platforms 均来自 references/cn-source-ranking.md 的实算值。
@@ -186,25 +185,10 @@ GROUP_PLAN = {
     "比较": ("对比页", "同口径维度 6–10 个，**必须写自己的局限**，只夸自己可信度极低"),
     "替代": ("对比页", "承接「XX 的替代方案」，正面回应为什么不用现有方案"),
     "价格": ("定义/说明页", "价格透明度直接影响可信度；有特殊币种或计费方式要单独解释"),
-    "风险": ("定义/说明页", "正面回应质疑（数据安全、可靠性），回避反而降低可信度"),
+    "风险": ("风险说明页", "逐项回答题目里的风险、触发条件及核验方式，不要写成泛泛的品牌介绍"),
     "品牌验证": ("关于页 + 百科", "AI 回答「是家什么公司」时的事实源，实体消歧的主战场"),
     "场景": ("教程/how-to 页", "含数字 +61.6%、how-to +41.2% 影响力；步骤块是必需项"),
 }
-
-
-def _existing_content(slug: str) -> dict[str, list[str]]:
-    """扫 content/ 与 assets/，看每个问题有没有内容承接。约定：文件头注释里写 `目标问题 qXXX`。"""
-    pdir = G.project_dir(slug)
-    hit: dict[str, list[str]] = {}
-    for d, tag in ((pdir / "content", "已成稿"), (pdir / "assets" / "drafts", "AI初稿"),
-                   (pdir / "assets" / "outlines", "仅大纲")):
-        if not d.exists():
-            continue
-        for f in d.glob("*.md"):
-            head = f.read_text("utf-8", "replace")[:600]
-            for qid in re.findall(r"\bq\d{3}\b", head + f.stem):
-                hit.setdefault(qid, []).append(tag)
-    return hit
 
 
 def build(slug: str) -> dict:
@@ -237,12 +221,20 @@ def build(slug: str) -> dict:
                              "fits": CHANNEL_FITS.get(ch["id"], [])})
 
     # 内容矩阵
-    hits = _existing_content(slug)
     contents = []
     for q in cfg.get("questions", []):
         form, note = GROUP_PLAN.get(q.get("group", ""), ("定义/说明页", ""))
-        st = hits.get(q.get("id"), [])
-        status = "已成稿" if "已成稿" in st else "AI初稿" if "AI初稿" in st else "仅大纲" if st else "缺口"
+        qid, question = q.get("id") or "", q.get("text") or ""
+        if qid and question and sum(x.get("id") == qid for x in cfg["questions"]) == 1:
+            assets = GEN.locate_question_assets(slug, qid, question)
+        else:
+            assets = {"sources": []}
+        verified = {s["kind"] for s in assets["sources"] if not s["unverified"]}
+        unverified = any(s["unverified"] for s in assets["sources"])
+        status = ("已成稿" if "content" in verified else
+                  "AI初稿" if "draft" in verified else
+                  "仅大纲" if "outline" in verified else
+                  "待核对" if unverified else "缺口")
         contents.append({"id": q.get("id"), "market": q.get("market", market),
                          "group": q.get("group", ""), "question": q.get("text", ""),
                          "form": form, "note": note, "status": status})
@@ -259,7 +251,7 @@ def build(slug: str) -> dict:
         "content_total": len(contents),
         "content_done": sum(1 for c in contents if c["status"] == "已成稿"),
         "content_rate": rate(contents, lambda c: c["status"] == "已成稿"),
-        "content_gap": sum(1 for c in contents if c["status"] == "缺口"),
+        "content_gap": sum(1 for c in contents if c["status"] != "已成稿"),
     }
 
     roadmap = [

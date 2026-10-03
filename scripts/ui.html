@@ -356,11 +356,11 @@ const UI_D={en:{
 '创建并开始自动引导':'作成して自動開始','⚠ 还没有配置任何引擎 API Key':'⚠ エンジン API キー未設定',
 '这些数字怎么来的——生成规则与指标口径':'数値の由来——生成ルールと指標定義','数据加载失败':'読み込み失敗',
 }};
-const UI_SUB={en:[['已配置','Configured'],['人工采样','Manual'],['未测','n/a'],['未采样','Not sampled'],['已成稿','Final'],['仅大纲','Outline only'],['AI初稿','AI draft'],['缺口','Gap'],
+const UI_SUB={en:[['已配置','Configured'],['人工采样','Manual'],['未测','n/a'],['未采样','Not sampled'],['已成稿','Final'],['仅大纲','Outline only'],['AI初稿','AI draft'],['待核对','Needs review'],['缺口','Gap'],
  ['已被引用','Cited'],['未建','Not built'],['已验收','Verified'],['未达标','Below target'],['通过','Pass'],['待人工','Manual check'],['数据更新于','Updated '],
  ['疑似负面','Susp. negative'],['竞品主导','Rival-dominated'],['完全缺席','Absent'],['排名靠后','Low-ranked'],['表现正常','Healthy'],['点名','named'],
  ['联网','search'],['参数化知识','parametric'],['自有阵地','owned'],['百科','wiki'],['榜单','rankings'],['已铺','placed'],['适配','fits'],['当前','current']],
-ja:[['已配置','設定済'],['人工采样','手動'],['未测','未計測'],['未采样','未採取'],['已成稿','完成稿'],['仅大纲','概要のみ'],['AI初稿','AI 下書き'],['缺口','欠落'],
+ja:[['已配置','設定済'],['人工采样','手動'],['未测','未計測'],['未采样','未採取'],['已成稿','完成稿'],['仅大纲','概要のみ'],['AI初稿','AI 下書き'],['待核对','要確認'],['缺口','欠落'],
  ['已被引用','引用あり'],['未建','未構築'],['已验收','検証済'],['未达标','未達'],['通过','合格'],['待人工','要確認'],['数据更新于','更新 '],
  ['疑似负面','ネガ疑い'],['竞品主导','競合支配'],['完全缺席','完全不在'],['排名靠后','低順位'],['表现正常','正常'],['点名','指名'],
  ['联网','検索'],['参数化知识','パラメトリック'],['自有阵地','自社'],['已铺','配信済'],['适配','適合'],['当前','現在']]};
@@ -1986,21 +1986,40 @@ async function setTask(id,status){
 }
 
 /* ===================== 内容工作台 ===================== */
-let WB={qid:null,sources:[],cur:null,text:'',check:null,q:null};
+let WB={qid:null,sources:[],stale:[],cur:null,text:'',check:null,q:null};
+let wbRequest=0;
+let wbFileRequest=0;
 async function loadWB(qid){
+  const seq=++wbRequest;
+  wbFileRequest++;
   const w=await api(`/api/workbench/${SLUG}?qid=${encodeURIComponent(qid||'')}`);
-  WB.qid=qid;WB.sources=w.sources||[];WB.q=w.question;WB.cur=null;WB.text='';WB.check=null;
+  if(seq!==wbRequest)return;
+  WB.qid=qid;WB.sources=w.sources||[];WB.stale=w.stale||[];WB.q=w.question;WB.cur=null;WB.text='';WB.check=null;
   WB.miss=(qid&&!WB.q&&!w.error)?qid:null;
-  if(WB.sources.length)await loadWBFile(0); else render();
+  const first=WB.sources.findIndex(s=>!s.unverified);
+  if(first>=0)await loadWBFile(first,seq); else render();
 }
-async function loadWBFile(i){
-  WB.cur=WB.sources[i];
-  const s=WB.cur;let r;
+async function loadWBFile(i,seq=wbRequest){
+  const s=WB.sources[i];if(!s)return;
+  const fileSeq=++wbFileRequest;
+  let r;
   if(s.kind==='content')r=await api(`/api/content/${SLUG}?path=${encodeURIComponent(s.path)}`);
   else r=await api(`/api/asset/${SLUG}?path=${encodeURIComponent(s.path)}`);
-  WB.text=r.text||'';
-  const ck=await post('/api/precheck',{text:WB.text});WB.check=(ck&&ck.error)?null:ck;
+  if(seq!==wbRequest||fileSeq!==wbFileRequest)return;
+  const body=r.text||'';
+  const ck=await post('/api/precheck',{text:body});
+  if(seq!==wbRequest||fileSeq!==wbFileRequest)return;
+  WB.cur=s;WB.text=body;WB.check=(ck&&ck.error)?null:ck;
   render();
+}
+async function wbRefreshOutline(){
+  if(!WB.q)return;
+  if(!confirm('重新生成当前问题的大纲？现有大纲若不同，会先备份；同题人工修改也会备份后替换。'))return;
+  const qid=WB.q.id;
+  const r=await post('/api/workbench-outline/'+SLUG,{qid});
+  if(!r.ok){toast('重新生成失败：'+(r.error||''),'err');return}
+  toast(r.backup?'已重建大纲，旧文件已备份':'已生成当前问题的大纲');
+  if(WB.q&&WB.q.id===qid)await loadWB(qid);
 }
 function vWorkbench(){
   if(ST.wq&&ST.wq!==WB.qid){const q=ST.wq;setTimeout(()=>loadWB(q),0);ST.wq=null;
@@ -2022,7 +2041,7 @@ function vWorkbench(){
         <div class="card elev" style="padding:14px;gap:8px">
           <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--t600)">这条任务要解决</div>
           <div style="font-size:13.5px;line-height:1.5">${esc(q.text)}</div>
-          <div style="font-size:11.5px;color:var(--t500)">${stat?('你当前提及 '+(stat.mention==null?'未采样':pct(stat.mention))+' · '+stat.samples+' 样本 · 内容'+stat.content):''}</div>
+          <div style="font-size:11.5px;color:var(--t500)">${stat?((stat.visibility?'你当前提及 '+(stat.mention==null?'未采样':pct(stat.mention)):'内容题不计入提及率')+' · '+stat.samples+' 样本 · 内容'+stat.content):''}</div>
         </div>
         <div class="card elev" style="padding:14px;gap:9px">
           <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--t600)">必须包含的抽取块（实测增益）</div>
@@ -2037,12 +2056,16 @@ function vWorkbench(){
         </div>
       </div>
       <div class="card elev" style="padding:0;overflow:hidden">
+        ${WB.stale.length?`<div style="padding:10px 14px;background:rgba(255,138,61,.1);font-size:12px;color:var(--accent)">检测到 ${WB.stale.length} 份与当前问题不一致的旧资产，已停止自动打开。请重建本题大纲；旧文件会保留备份。</div>`:''}
+        ${WB.sources.some(s=>s.unverified)?'<div style="padding:8px 14px;font-size:11.5px;color:var(--t500)">旧成稿或初稿缺少题目校验信息，需人工核对后再使用。</div>':''}
         <div class="row" style="padding:11px 14px;box-shadow:inset 0 -1px 0 var(--divider)">
           ${WB.sources.map((s,i)=>`<button class="btn ${WB.cur===s?'btn-primary':'btn-ghost'}" style="font-size:12px"
-            onclick="loadWBFile(${i})">${({content:'成稿',draft:'AI 初稿',outline:'大纲'})[s.kind]}</button>`).join('')||'<span class="muted" style="font-size:12px">还没有任何底稿——先跑「生成资产」出大纲</span>'}
+            onclick="loadWBFile(${i})">${({content:'成稿',draft:'AI 初稿',outline:'大纲'})[s.kind]}${s.unverified?' · 待核对':''}</button>`).join('')||'<span class="muted" style="font-size:12px">暂无已核对底稿，可生成本题大纲</span>'}
           <span style="margin-left:auto" class="row">
+            <button class="btn btn-ghost" style="font-size:12px" onclick="wbRefreshOutline()">重建本题大纲</button>
             <button class="btn btn-ghost" style="font-size:12px" onclick="wbCheck()">重新预检</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="wbSave()">保存</button>
+            ${WB.cur&&WB.cur.kind==='content'&&WB.cur.unverified?'<button class="btn btn-secondary" style="font-size:12px" onclick="wbVerifyContent()">核对并绑定本题</button>':''}
             ${WB.cur&&WB.cur.kind!=='content'?`<button class="btn btn-primary" style="font-size:12px" onclick="wbPublish()">发布为成稿</button>`:''}
             ${WB.cur&&WB.cur.kind==='content'?`<button class="btn btn-primary" style="font-size:12px" onclick="pubModal()">发布到渠道…</button>`:''}</span>
         </div>
@@ -2099,22 +2122,34 @@ function wbPickRows(){
     ||'<div class="muted" style="font-size:12.5px;padding:10px">没有匹配的问题</div>';
 }
 function wbFilterList(v){ST.wbFilter=v;const el=$('#wbpick');if(el)el.innerHTML=wbPickRows()}
-async function wbCheck(){WB.text=$('#wbtext').value;
-  const ck=await post('/api/precheck',{text:WB.text});WB.check=(ck&&ck.error)?null:ck;render()}
+async function wbCheck(){
+  const seq=wbRequest,fileSeq=wbFileRequest,text=$('#wbtext').value;
+  const ck=await post('/api/precheck',{text});
+  if(seq!==wbRequest||fileSeq!==wbFileRequest)return;
+  WB.text=text;WB.check=(ck&&ck.error)?null:ck;render()
+}
 async function wbPublish(){
   // 草稿/大纲 → content/ 成稿：内容承接指标由此上涨。文件头写入 qid 供蓝图识别。
-  WB.text=$('#wbtext').value;
   if(!WB.q){toast('没有目标问题','err');return}
-  if(WB.cur&&WB.cur.kind==='draft'&&D.lint&&D.lint.total)
+  const seq=wbRequest,fileSeq=wbFileRequest,qid=WB.q.id,source=WB.cur;
+  let text=$('#wbtext').value;
+  const ck=await post('/api/precheck',{text});
+  if(seq!==wbRequest||fileSeq!==wbFileRequest)return;
+  WB.text=text;WB.check=(ck&&ck.error)?null:ck;
+  if(source&&source.unverified&&!confirm('这份旧内容无法核对是否对应当前问题。请确认全文与当前题目一致后再继续。'))return;
+  if(source&&source.kind==='outline'&&(!WB.check||WB.check.wc<800)){
+    toast('这仍是大纲，请先写成至少 800 词的正文并重新预检，再发布为成稿','err');return;
+  }
+  if(source&&source.kind==='draft'&&D.lint&&D.lint.total)
     if(!confirm(`初稿风险检查有 ${D.lint.total} 项待人工核实（高风险 ${D.lint.high}）。确认已核实事实？`))return;
-  let text=WB.text;
-  if(text.indexOf(WB.q.id)<0)text=`<!-- 目标问题 ${WB.q.id} -->\n\n`+text;
-  const r=await post('/api/content/'+SLUG,{path:`${WB.q.id}-成稿.md`,text});
+  if(seq!==wbRequest||fileSeq!==wbFileRequest)return;
+  if(!text.includes(`<!-- 目标问题 ${qid} -->`))text=`<!-- 目标问题 ${qid} -->\n\n`+text;
+  const r=await post('/api/content/'+SLUG,{path:`${qid}-成稿.md`,qid,text});
   if(!r.ok){toast('发布失败：'+(r.error||''),'err');return}
   toast('已发布为成稿。重新生成蓝图后「内容承接」会更新');
   runAction('blueprint');
 }
-function wbReset(){WB={qid:null,sources:[],cur:null,text:'',check:null,q:null};ST.wq=null;render()}
+function wbReset(){wbRequest++;wbFileRequest++;WB={qid:null,sources:[],stale:[],cur:null,text:'',check:null,q:null};ST.wq=null;render()}
 function pendPubModal(){
   const cp=D.content_pub||[];
   modal(`<h4 style="font-size:17px">成稿发布状态</h4>
@@ -2186,6 +2221,16 @@ async function wbSave(){
   if(s.kind==='content')r=await post('/api/content/'+SLUG,{path:s.path,text:WB.text});
   else r=await post('/api/asset/'+SLUG,{path:s.path,text:WB.text});
   toast(r.ok?'已保存':'保存失败：'+(r.error||''),r.ok?'':'err');
+}
+async function wbVerifyContent(){
+  if(!WB.q||!WB.cur||WB.cur.kind!=='content'||!WB.cur.unverified)return;
+  const qid=WB.q.id,path=WB.cur.path,text=$('#wbtext').value;
+  if(!confirm(`请通读全文，确认「${WB.q.text}」就是这份成稿实际回答的问题。确认后会把成稿绑定到本题并重算内容状态。`))return;
+  const r=await post('/api/content/'+SLUG,{path,qid,text});
+  if(!r.ok){toast('核对绑定失败：'+(r.error||''),'err');return}
+  toast('已绑定当前问题；正在更新内容状态');
+  if(WB.q&&WB.q.id===qid)await loadWB(qid);
+  runAction('blueprint');
 }
 
 /* ===================== 效果验收 ===================== */
