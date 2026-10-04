@@ -61,6 +61,45 @@ test('overview does not interpret unmeasured citations as zero', () => {
   assert.ok(box.headline()[0].includes('数据不完整'));
 });
 
+test('question-group card labels the question-level metric and shows its numerator', () => {
+  const box = setup(null);
+  box.window = {};
+  box.ST = {};
+  box.EXPD = null;
+  box.pct = n => `${n * 100}%`;
+  box.demandSort = qs => qs;
+  box.D.analytics = {questions: [], question_groups: [
+    {group: '价格', kind: '买家', total: 3, selection_total: 2, sampled: 2, mentioned_questions: 1,
+      mention_rate: 0.5, lost: 0, no_content: 0},
+  ]};
+  box.D.content_pub = [];
+  vm.runInContext(source.slice(source.indexOf('function vQuestions(){'),
+    source.indexOf('function showMethod(){')), box);
+  const html = box.vQuestions();
+  assert.ok(html.includes('被提及题目占比'));
+  assert.ok(html.includes('1/2 题被提及'));
+  assert.ok(html.includes('50%'));
+});
+
+test('price group with content questions only is not called unmeasured visibility', () => {
+  const box = setup(null);
+  box.window = {};
+  box.ST = {};
+  box.EXPD = null;
+  box.demandSort = qs => qs;
+  box.D.analytics = {questions: [], question_groups: [
+    {group: '价格', kind: '买家', total: 1, selection_total: 0, sampled: 0,
+      mentioned_questions: 0, mention_rate: null, lost: 0, no_content: 0},
+  ]};
+  box.D.content_pub = [];
+  vm.runInContext(source.slice(source.indexOf('function vQuestions(){'),
+    source.indexOf('function showMethod(){')), box);
+  const html = box.vQuestions();
+  assert.ok(html.includes('内容观察'));
+  assert.ok(html.includes('内容题不计入提及率'));
+  assert.ok(!html.includes('被提及题目占比'));
+});
+
 test('sample list invalidation discards an older in-flight response', async () => {
   const box = setup(null);
   let finish;

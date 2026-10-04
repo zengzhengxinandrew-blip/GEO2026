@@ -106,6 +106,12 @@ class TestVisibilityScope(unittest.TestCase):
         self.assertTrue(S.visibility_question("洁净室围护系统有哪些靠谱的厂家推荐？"))
         self.assertTrue(S.visibility_question("Best cleanroom panel suppliers?"))
 
+    def test_price_word_alone_is_not_vendor_selection(self):
+        self.assertTrue(S.visibility_question("洁净室净化板哪些厂家报价值得比较？"))
+        self.assertTrue(S.visibility_question("Which cleanroom panel suppliers offer the best value?"))
+        self.assertFalse(S.visibility_question("洁净室净化板报价主要由哪些因素决定？"))
+        self.assertFalse(S.visibility_question("洁净室净化板每平方米多少钱？"))
+
     def test_technical_rows_do_not_dilute_mention_rate(self):
         rows = [make_row(qid="choice", question="洁净室围护系统有哪些靠谱的厂家推荐？"),
                 make_row(qid="how", question="高校实验室改造洁净室，围护系统一般怎么弄？",

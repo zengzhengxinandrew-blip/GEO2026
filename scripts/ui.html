@@ -655,9 +655,11 @@ UI_RX.ja.push(
  [/^项待人工核实（高风险 (\d+)）。核实前不得发布——明细见 drafts\/_lint\.json。$/,' 件が要人手検証（高リスク $1）。検証前の公開不可——詳細は drafts/_lint.json。'],
  [/^缺 ([A-Z][A-Z_0-9、 ]+)$/,'未設定：$1']);
 UI_SUB.en.push(['品牌验证','Brand check'],['操作步骤','Steps'],['数字事实','Numeric facts'],['利于召回','Recall aid'],
+ ['题被提及','questions mentioned'],['题已采','sampled'],['题失守','lost'],['题无内容','without content'],
  ['推荐','Recommend'],['比较','Compare'],['替代','Alternatives'],['价格','Pricing'],['风险','Risk'],['场景','Scenarios'],
  ['定义','Definition'],['对比','Comparison'],['开发','Dev'],['内容','Content'],['市场','Marketing']);
 UI_SUB.ja.push(['品牌验证','ブランド確認'],['操作步骤','手順'],['数字事实','数値ファクト'],['利于召回','想起支援'],
+ ['题被提及','問で言及'],['题已采','問採取済'],['题失守','問で不在'],['题无内容','問でコンテンツなし'],
  ['推荐','推奨'],['比较','比較'],['替代','代替'],['价格','価格'],['风险','リスク'],['场景','シナリオ'],
  ['定义','定義'],['对比','比較'],['开发','開発'],['内容','コンテンツ'],['市场','マーケ']);
 Object.assign(UI_D.en,{
@@ -701,6 +703,8 @@ Object.assign(UI_D.en,{
 '个人日常账号（含个性化，仅供参考）':'Personal account (personalized — reference only)','一次性沙箱（无历史无 Cookie，未登录）':'Disposable sandbox (no history/cookies, logged out)',
 // 问题库分组卡
 '买家':'Buyer','教育':'Educate','探测':'Probe','点名题不计入提及率':'Named probes excluded from mention rate',
+'被提及题目占比':'Share of questions mentioned',
+'内容题不计入提及率':'Content questions excluded from mention rate',
 '「有什么推荐」——最直接的选型入口':'"What do you recommend" — the most direct entry','「A 和 B 哪个好」——竞品同框，输赢最明显':'"A vs B" — rivals side by side',
 '「有没有 X 的替代」——对手用户在换供应商':'"Alternatives to X" — rival users switching','「多少钱/怎么收费」——离付款最近':'"Pricing" — closest to purchase',
 '具体场景怎么用——承接长尾需求':'Scenario how-tos — long-tail demand','顾虑与边界——不答就被别人替你答':'Concerns & limits — answer or others will',
@@ -760,6 +764,8 @@ Object.assign(UI_D.ja,{
 '无痕未登录':'シークレット未ログイン','专用采样 Profile（已登录，无自查历史）':'専用プロファイル（ログイン済・自己検索履歴なし）',
 '个人日常账号（含个性化，仅供参考）':'個人アカウント（パーソナライズ込み・参考値）','一次性沙箱（无历史无 Cookie，未登录）':'使い捨てサンドボックス（履歴・Cookie なし）',
 '买家':'購買','教育':'啓蒙','探测':'指名','点名题不计入提及率':'指名質問は言及率に含めない',
+'被提及题目占比':'言及された質問の割合',
+'内容题不计入提及率':'内容質問は言及率に含めない',
 '「有什么推荐」——最直接的选型入口':'「おすすめは」——最直接の選定入口','「A 和 B 哪个好」——竞品同框，输赢最明显':'「A と B どちら」——競合同席で勝敗明確',
 '「有没有 X 的替代」——对手用户在换供应商':'「X の代替は」——競合ユーザーの乗換','「多少钱/怎么收费」——离付款最近':'「価格は」——購入に最も近い',
 '具体场景怎么用——承接长尾需求':'シーン別 how-to——ロングテール需要','顾虑与边界——不答就被别人替你答':'懸念と限界——答えねば他者が答える',
@@ -1516,9 +1522,10 @@ function vQuestions(){
         <span style="font-size:10px;color:${kindCol[g.kind]||'var(--t600)'}">${esc(g.kind)}</span>
         <span style="margin-left:auto;font-size:11.5px;color:var(--t600)">${g.total} 题</span></div>
       <div style="font-size:19px;font-weight:500;color:${g.mention_rate==null?'var(--t600)':(g.mention_rate>0?'var(--a300)':'var(--accent)')}">
-        ${g.kind==='探测'?'—':(g.mention_rate==null?(g.kind==='教育'?'内容观察':'未测'):pct(g.mention_rate))}</div>
+        ${g.kind==='探测'?'—':(g.mention_rate==null?(g.selection_total?'未测':'内容观察'):pct(g.mention_rate))}</div>
+      ${g.kind==='探测'||!g.selection_total?'':`<div style="font-size:10.5px;color:var(--t600)">被提及题目占比</div>`}
       <div style="font-size:10.5px;color:var(--t600)">${g.kind==='探测'?'点名题不计入提及率'
-        :`${g.sampled} 题已采${g.lost?` · <span style="color:var(--accent)">${g.lost} 题失守</span>`:''}${g.no_content?` · ${g.no_content} 题无内容`:''}`}</div>
+        :`${!g.selection_total?'内容题不计入提及率':g.mention_rate==null?`${g.sampled} 题已采`:`${g.mentioned_questions}/${g.sampled} 题被提及`}${g.lost?` · <span style="color:var(--accent)">${g.lost} 题失守</span>`:''}${g.no_content?` · ${g.no_content} 题无内容`:''}`}</div>
     </div>`).join('')}
   </div>`:'';
   let probeSep=false;
@@ -1590,6 +1597,7 @@ function showMethod(){
     ${h('三、指标口径（引擎表现页每一列）')}
     <ul style="font-size:12.5px;color:var(--t400);padding-left:18px">
       ${li('<b>提及率</b> = 有效「选型题」样本中，回答主动提到品牌（含别名）的比例。技术做法/特殊要求/注意事项等内容题，以及点名品牌的探测题，都不进入分母。内容题仍可查看答案、做内容规划；别名漏配会低估提及率。')}
+      ${li('<b>分组卡的「被提及题目占比」</b> = 已采样的选型题中，至少有一次有效回答提及品牌的题目数 ÷ 已采样的选型题数。它按题目计数，与上面的按回答计数的「提及率」不同；内容题和点名题不进入分母。')}
       ${li('<b>提及位次</b> = 回答里品牌相对其他候选品牌出现顺序的中位数，越小越靠前。')}
       ${li('<b>引用份额</b> = 回答引用的全部域名条数中，属于你自有域名（含子域名）的比例。不联网引擎通常没有引用，显示 —。')}
       ${li('<b>结论</b>列的判语规则：0% → 完全不可见；严格高于同市场所有引擎 → 表现最好；≥5% → 有存在感但不稳定；&lt;5% → 偶发提及；从未引用你的域名会单独标注。样本不足或无法比较时不下结论。')}

@@ -134,7 +134,7 @@ QUESTION_PROMPT = """你是 GEO 分析师。根据下面的品牌信息，设计
 
 要求：
 
-1. 分七组：推荐、比较、替代、价格、风险、品牌验证、场景。每组 2-4 题
+1. 分七组：推荐、比较、替代、价格、风险、品牌验证、场景。单市场每组 2-4 题；双市场分别覆盖七组，总题量以第 5 条为准
 2. **用目标市场用户的真实口语说法**，完整问句，不是关键词堆砌
 3. 市场标记规则：
    - "cn"：中文问法。不要翻译腔，要像真人在国内 AI 里会打的字
@@ -146,7 +146,8 @@ QUESTION_PROMPT = """你是 GEO 分析师。根据下面的品牌信息，设计
 7. 把问题分成两种用途：
    - 选型题：用户明确要找、推荐、比较品牌/厂家/供应商/产品；AI 答案自然有列出品牌的机会。这类才用于「品牌提及率」。推荐/比较/替代组以选型题为主。
    - 内容题：问怎么做、技术要求、注意事项、规范或风险；即使品牌没出现也不代表品牌不可见。场景/风险组可保留这类题，用于内容规划，不计入品牌提及率。
-   不要把「围护系统一般怎么弄」「有什么特殊要求」「要注意什么」这样的知识题伪装成推荐题。价格题若只是问价格构成而非选供应商，也是内容题。
+   价格组每个市场优先出 2 道真实选厂商/产品的报价比较题（明确问「哪家/哪些厂家/供应商/品牌值得选或比较」），另保留 1 道预算、报价构成等价格知识题。前者是选型题，后者是内容题；不能仅因提到「价格/报价/多少钱」就标为选型题。不要编造具体报价、排名或未经证实的产品能力。
+   不要把「围护系统一般怎么弄」「有什么特殊要求」「要注意什么」这样的知识题伪装成推荐题。
 8. 每题的 scope 填 visibility 或 content；品牌验证题填 probe。避免不同组里换几个字重复出同一道题。
 
 输出 JSON（不要任何解释）：
@@ -176,10 +177,13 @@ def question_bank(brand: dict, market: str) -> list[dict]:
             continue
         seen.add(t)
         scope = q.get("scope")
-        # LLM 标注仅作候选；提及率资格还需符合可复现的选型问法规则。
-        if scope == "visibility" and not S.visibility_question(t):
-            scope = "content"
         group = q.get("group") if q.get("group") in GROUPS else "推荐"
+        # LLM 标注仅作候选；提及率资格还需符合可复现的选型问法规则。
+        # 价格组尤其不能仅凭「报价/多少钱」进分母，也不能漏掉明确选厂商的题。
+        if group == "价格":
+            scope = "visibility" if S.visibility_question(t) else "content"
+        elif scope == "visibility" and not S.visibility_question(t):
+            scope = "content"
         if group == "品牌验证":
             scope = "probe"
         out.append({"id": q.get("id") or f"q{len(out)+1:03d}",

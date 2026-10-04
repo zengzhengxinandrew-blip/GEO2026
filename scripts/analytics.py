@@ -383,8 +383,8 @@ GROUP_META = [
 
 
 def question_groups(qs: list[dict]) -> list[dict]:
-    """按意图分组聚合：哪一类问题上最没存在感，就该先补哪一类内容。
-    点名探测题（brand_probe）不参与提及率——它必然复述品牌名，混进来就是假阳性。"""
+    """按意图分组聚合；mention_rate 是被提及题目占比，不是逐条回答提及率。
+    内容题的 mention 为 None，点名探测题（brand_probe）也不参与计算。"""
     out = []
     known = {g for g, _, _ in GROUP_META}
     names = [g for g, _, _ in GROUP_META] + sorted({q.get("group") for q in qs
@@ -401,7 +401,9 @@ def question_groups(qs: list[dict]) -> list[dict]:
         out.append({
             "group": name, "kind": meta[1], "note": meta[2],
             "total": len(rows), "probe": len(probe),
+            "selection_total": sum(1 for q in real if q.get("visibility")),
             "sampled": len(sampled),
+            "mentioned_questions": len(hit),
             # 未采样时是 None（未测），不要退化成 0——那会读成「全军覆没」
             "mention_rate": round(len(hit) / len(sampled), 3) if sampled else None,
             "no_content": sum(1 for q in real if q.get("content") != "已成稿"),

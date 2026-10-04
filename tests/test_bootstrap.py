@@ -81,6 +81,24 @@ class TestQuestionBankScope(unittest.TestCase):
         self.assertIn("官网确认的产品/能力：洁净室围护系统", captured["prompt"])
         self.assertEqual([q["scope"] for q in qs], ["content", "visibility"])
 
+    def test_price_questions_classified_by_vendor_choice_not_price_word(self):
+        captured = {}
+
+        def fake_ask(prompt):
+            captured["prompt"] = prompt
+            return {"questions": [
+                {"id": "q001", "group": "价格", "market": "cn", "scope": "content",
+                 "text": "洁净室净化板哪些厂家报价值得比较？"},
+                {"id": "q002", "group": "价格", "market": "cn", "scope": "visibility",
+                 "text": "洁净室净化板报价主要由哪些因素决定？"},
+            ]}
+
+        with mock.patch.object(B, "_ask_json", side_effect=fake_ask):
+            qs = B.question_bank({"name": "测试品牌", "industry": "洁净室围护",
+                                  "products": ["洁净室净化板"]}, "cn")
+        self.assertIn("优先出 2 道真实选厂商/产品的报价比较题", captured["prompt"])
+        self.assertEqual([q["scope"] for q in qs], ["visibility", "content"])
+
 
 class TestCompetitorConfirmation(WorkDirCase):
     def _manual_file(self, answer):

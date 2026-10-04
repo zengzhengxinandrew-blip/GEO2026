@@ -191,6 +191,24 @@ class TestTrend(Base):
         self.assertEqual(tr[0]["mention"], 0.5)
 
 
+class TestQuestionGroups(unittest.TestCase):
+    def test_card_counts_questions_with_any_mention_not_answers(self):
+        grouped = A.question_groups([
+            {"group": "价格", "brand_probe": False, "visibility": True, "mention": 0.25, "content": "缺口"},
+            {"group": "价格", "brand_probe": False, "visibility": True, "mention": 0, "content": "缺口"},
+            {"group": "价格", "brand_probe": False, "visibility": False, "mention": None, "content": "缺口"},
+            {"group": "品牌验证", "brand_probe": True, "mention": 1, "content": "缺口"},
+        ])
+        price = next(g for g in grouped if g["group"] == "价格")
+        self.assertEqual(price["total"], 3)
+        self.assertEqual(price["selection_total"], 2)
+        self.assertEqual(price["sampled"], 2)
+        self.assertEqual(price["mentioned_questions"], 1)
+        self.assertEqual(price["mention_rate"], 0.5)
+        probe = next(g for g in grouped if g["group"] == "品牌验证")
+        self.assertIsNone(probe["mention_rate"])
+
+
 class TestQuestionDelta(Base):
     def test_untested_sorted_last(self):
         before = [row(qid="q1", mentioned=True),
