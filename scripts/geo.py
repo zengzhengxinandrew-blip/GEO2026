@@ -37,6 +37,15 @@ DEFAULT_PLATFORMS = {
 }
 
 
+def _initial_slug(a) -> str | None:
+    if a.slug:
+        return a.slug
+    if getattr(a, "no_site", False) or not (a.url or "").strip():
+        return G.slugify(a.name) if a.name else None
+    host = urlparse(a.url if a.url.startswith("http") else "https://" + a.url).netloc
+    return G.slugify(host.removeprefix("www.").split(".")[0])
+
+
 def cmd_init(a):
     # 无站点模式：电商商品、线下品牌、小程序等没有自有官网的对象同样能做 GEO。
     # 抓取/体检/站内资产不适用，采样、竞品、阵地、内容、验收全部照常。
@@ -45,13 +54,13 @@ def cmd_init(a):
         if not a.name:
             G.die("无站点项目必须用 --name 指定品牌/商品名（没有官网可供推断）")
         url, host = "", ""
-        slug = a.slug or G.slugify(a.name)
+        slug = _initial_slug(a)
     else:
         url = a.url.rstrip("/")
         if not url.startswith("http"):
             url = "https://" + url
         host = urlparse(url).netloc.removeprefix("www.")
-        slug = a.slug or G.slugify(host.split(".")[0])
+        slug = _initial_slug(a)
 
     # 已存在的项目绝不覆盖：geo.json 里有问题库、竞品、事实口径，
     # 覆盖等于把一期的人工投入清零。要重建必须显式加 --force。
@@ -93,9 +102,13 @@ def cmd_init(a):
         "targets": {"mention_rate": 0.5, "top3_rate": 0.3, "avg_page_score": 75},
         "notes": "questions / competitors / aliases 由 Claude 按 SKILL.md 步骤 2 填充",
     }
-    G.save_config(slug, cfg)
-    for sub in ("evidence", "samples", "metrics", "reports", "history", "content"):
-        (G.project_dir(slug) / sub).mkdir(parents=True, exist_ok=True)
+    with G.project_lock(slug):
+        # Recheck inside the cross-process lock: two users may create the same slug together.
+        if existing.exists() and not getattr(a, "force", False):
+            G.die(f"项目 `{slug}` 已被其他用户创建，请刷新项目列表")
+        G.save_config(slug, cfg)
+        for sub in ("evidence", "samples", "metrics", "reports", "history", "content"):
+            (G.project_dir(slug) / sub).mkdir(parents=True, exist_ok=True)
 
     # 无站点项目：材料文本取代官网正文，成为品牌事实/竞品/问题库的推导底座
     mat_path = G.project_dir(slug) / "content" / "materials.md"
@@ -708,7 +721,18 @@ def main():
     s.set_defaults(func=cmd_list)
 
     a = p.parse_args()
-    a.func(a)
+    # UI jobs inherit an already-held run lock; direct CLI calls must acquire it.
+    target_slug = (_initial_slug(a) if a.cmd in ("init", "new")
+                   else getattr(a, "slug", None))
+    if target_slug and a.cmd not in ("status",) \
+            and not os.environ.get("GEOLOOK_HELD_RUN_LOCK_FD"):
+        fd = G.acquire_run_lock(target_slug)
+        if fd is None:
+            G.die(f"项目 {target_slug} 已有任务在运行，不能并行修改")
+        with fd:
+            a.func(a)
+    else:
+        a.func(a)
 
 
 if __name__ == "__main__":

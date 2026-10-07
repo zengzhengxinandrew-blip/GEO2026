@@ -1099,6 +1099,7 @@ function renderSide(){
     采样为手动触发或由 schedule 驱动
     <div style="margin-top:8px">${RUNNING
       ?`<span class="spin"></span>任务运行中`
+      :D&&D.access_role==='viewer'?'只读权限'
       :`<button class="btn btn-ghost" style="font-size:12px;padding:2px 4px" onclick="runAction('serve')">▶ 更新本期数据</button>`}</div>
     <div class="row" style="margin-top:9px;padding-top:8px;box-shadow:inset 0 1px 0 var(--line);gap:5px">
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc((ME&&ME.username)||'')}">${esc((ME&&ME.username)||'用户')}</span>
@@ -1109,8 +1110,11 @@ function renderSide(){
 
 /* ===================== 任务运行 ===================== */
 async function runAction(a,params){
+  if(D&&D.access_role==='viewer'){toast('你在此项目只有只读权限','err');return null}
   const r=await post('/api/run',{slug:SLUG,action:a,params:params||{}});
-  if(!r.ok){toast(r.error||'启动失败','err');return null}
+  if(!r.ok){
+    if(r.job&&r.job.id){RUNNING=r.job.id;LASTJOB=r.job.id;LOGOFF=0;renderSide();pollJob()}
+    toast(r.job?`${r.job.label||r.job.action} 正在运行，由 ${r.job.started_by||'其他用户'} 启动`:(r.error||'启动失败'),'err');return null}
   RUNNING=r.job.id;LASTJOB=r.job.id;LOGOFF=0;renderSide();pollJob();
   toast('已启动：'+((ACTIONS[a]||{}).label||a));return r.job;
 }
@@ -1124,10 +1128,10 @@ async function pollJob(){
   if(r.error){RUNNING=null;renderSide();toast('任务状态丢失','err');return}
   LOGOFF=r.offset;
   const pre=$('#joblog'); if(pre&&r.log){pre.textContent+=r.log;pre.scrollTop=pre.scrollHeight}
-  const st=$('#jobstat'); if(st)st.innerHTML=r.job.status==='running'
-    ?`<span class="spin"></span>${esc(r.job.label)} 运行中…`
+  const st=$('#jobstat'); if(st)st.innerHTML=['running','stopping'].includes(r.job.status)
+    ?`<span class="spin"></span>${esc(r.job.label)} ${r.job.status==='stopping'?'停止中':'运行中'}…`
     :`${r.job.status==='done'?'✓':'✗'} ${esc(r.job.label)} ${({done:'完成',failed:'失败',stopped:'已停止',interrupted:'已中断'})[r.job.status]||r.job.status}`;
-  if(r.job.status==='running'){POLL=setTimeout(pollJob,900)}
+  if(['running','stopping'].includes(r.job.status)){POLL=setTimeout(pollJob,900)}
   else{RUNNING=null;
     // 任务可能刚写入成功/失败样本。列表必须与按需读取的详情使用同一批最新数据。
     invalidateSamples();
@@ -1613,6 +1617,7 @@ function showMethod(){
 }
 async function editQuestions(){
   const cfg=await api('/api/config/'+SLUG);
+  ST.qRevision=cfg._revision;
   const rows=(cfg.questions||[]).map(q=>`${q.id}|${q.group}|${q.market}|${q.scope||'auto'}|${q.text}`).join('\n');
   modal(`<h4 style="font-size:17px">编辑问题库</h4>
     <p class="muted" style="font-size:12px">每行一题：<code>编号|分组|市场(cn/global/both)|用途(visibility/content/auto)|问题</code>。visibility=选型题，content=内容题，auto=自动判定。旧四列格式仍可用；改用途会重算已有答案，改题需重采样。</p>
@@ -1623,6 +1628,7 @@ async function editQuestions(){
 }
 async function saveQuestions(){
   const cfg=await api('/api/config/'+SLUG);
+  cfg._revision=ST.qRevision;
   const qs=[];
   for(const line of $('#qedit').value.split('\n')){
     const m=line.split('|');if(m.length<4||!m[3].trim())continue;
@@ -1633,7 +1639,7 @@ async function saveQuestions(){
   }
   cfg.questions=qs; if(cfg.bootstrap)cfg.bootstrap.needs_review=false;
   const r=await post('/api/config/'+SLUG,cfg);
-  toast(r.ok?`已保存 ${qs.length} 题`:'保存失败',r.ok?'':'err');
+  toast(r.ok?`已保存 ${qs.length} 题`:(r.error||'保存失败'),r.ok?'':'err');
   if(r.ok){closeModal();load(SLUG,true)}
 }
 
@@ -2399,7 +2405,7 @@ async function importSheet(name){
 }
 
 /* ===================== 设置 ===================== */
-let KEYS=null,PROJECTS=null,SET_CFG=null,PUB=null,SET_HTML='',EXPD=null;
+let KEYS=null,PROJECTS=null,SET_CFG=null,PUB=null,SET_HTML='',EXPD=null,PROJECT_MEMBERS=null,API_LIMITS=null;
 /* ===================== 发布渠道（账号 · 独立页） ===================== */
 async function vPublishing(){
   if(!PUB)PUB=await api('/api/publish/'+SLUG);
@@ -2525,6 +2531,10 @@ async function vSettings(){
   if(!PROJECTS)PROJECTS=await api('/api/projects');
   if(!Array.isArray(PROJECTS))PROJECTS=[];
   if(!SET_CFG)SET_CFG=await api('/api/config/'+SLUG);
+  if(D.access_role==='admin'&&!PROJECT_MEMBERS){
+    const members=await api('/api/project-members/'+SLUG);
+    PROJECT_MEMBERS=Array.isArray(members)?members:[]}
+  if(ME&&ME.role==='admin'&&!API_LIMITS)API_LIMITS=await api('/api/api-limits');
   const mon=(SET_CFG&&SET_CFG.monitor)||{},monCur=mon.every_days||0;
   setTimeout(()=>{if(LASTJOB&&!RUNNING)showLog(LASTJOB)},0);
   const acts=['crawl','audit','bootstrap','sample','sample-sheet','plan','blueprint','generate','lint','report','deliverables','verify','deliver'];
@@ -2542,8 +2552,18 @@ async function vSettings(){
     </tbody></table></div>
     <div class="row" style="margin-top:10px">
       <button class="btn btn-primary" onclick="go('onboard',{obStep:1})">+ 接入新品牌</button>
-      <button class="btn btn-secondary" onclick="editConfig()">编辑当前品牌配置</button>
+      ${D.access_role!=='viewer'?'<button class="btn btn-secondary" onclick="editConfig()">编辑当前品牌配置</button>':''}
     </div>
+
+    ${D.access_role==='admin'?`<div class="card elev" style="padding:18px;gap:9px;margin-top:20px">
+      <div style="font-size:15px;font-weight:500">项目成员权限</div>
+      <p class="muted" style="font-size:12px">管理员可管理成员；可编辑者可运行任务和修改项目；只读者只能查看。全局管理员始终可访问所有项目。</p>
+      ${(PROJECT_MEMBERS||[]).map(m=>`<div class="row" style="gap:8px;font-size:12px"><span style="flex:1">${esc(m.username)}</span>
+        <span class="muted">${esc(({admin:'管理员',editor:'可编辑',viewer:'只读'})[m.role]||m.role)}</span>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="removeProjectMember(${esc(JSON.stringify(m.username))})">移除</button></div>`).join('')}
+      <div class="row" style="gap:8px"><input id="pm-user" class="input" placeholder="已有用户名" style="max-width:200px">
+        <select id="pm-role" class="input" style="max-width:130px"><option value="viewer">只读</option><option value="editor">可编辑</option><option value="admin">管理员</option></select>
+        <button class="btn btn-secondary" onclick="saveProjectMember()">添加或修改</button></div></div>`:''}
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px">
       <div class="card elev" style="padding:18px;gap:8px">
@@ -2561,7 +2581,7 @@ async function vSettings(){
               <span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span>
               ${k.search?'<span class="tag tag-outline" style="font-size:10px;margin-left:4px" title="原生联网并返回引用，采样证据质量最高">优先 · 联网</span>':'<span class="muted" style="font-size:10.5px;margin-left:4px" title="API 不联网，测的是模型参数化知识里的品牌认知——同样是有效指标">可选 · 不联网</span>'}</span>
             <span class="engine-key-status" style="font-size:11.5px;color:${k.ok===true?'var(--success)':'var(--t600)'}">${k.ok===true?'已配置'+(k.key_tail?' ····'+esc(k.key_tail):''):esc(k.env)}</span>
-            <button class="btn ${k.ok===true?'btn-ghost engine-key-action':'btn-secondary'}" style="font-size:12px;padding:2px 8px" onclick="editKey(${k.i})">${k.ok===true?'修改':'配置'}</button></div>`;
+            ${ME&&ME.role==='admin'?`<button class="btn ${k.ok===true?'btn-ghost engine-key-action':'btn-secondary'}" style="font-size:12px;padding:2px 8px" onclick="editKey(${k.i})">${k.ok===true?'修改':'配置'}</button>`:''}</div>`;
           return `
           <div><div style="font-size:15px;font-weight:500">引擎与密钥</div>
             <div style="font-size:11.5px;color:var(--t600)">Key 写入项目根目录 .env，立即生效。<b>配好任意 1 个引擎就能开始采样</b>，配得越多覆盖越全。</div></div>
@@ -2575,7 +2595,7 @@ async function vSettings(){
             <span class="dot" style="background:${k.ok===true?'var(--success)':'var(--ink-300)'}"></span>
             <span style="flex:1;font-size:12.5px">${esc(k.label)}<span class="muted" style="font-size:11px;margin-left:6px">${mktLabel(k.market)}</span></span>
             <span style="font-size:11px;color:var(--t600)">不配不影响当前项目</span>
-            <button class="btn btn-ghost" style="font-size:11.5px;padding:2px 8px" onclick="editKey(${k.i})">仍要配置</button></div>`).join('')}`:''}
+            ${ME&&ME.role==='admin'?`<button class="btn btn-ghost" style="font-size:11.5px;padding:2px 8px" onclick="editKey(${k.i})">仍要配置</button>`:''}</div>`).join('')}`:''}
 
           <div style="font-size:11px;letter-spacing:.08em;color:var(--t600);margin-top:12px">无需配置 · 没有公开 API，走人工周检表</div>
           ${man.filter(k=>M==='both'||k.market===M).map(k=>`<div class="row" style="padding:4px 0;box-shadow:inset 0 -1px 0 var(--line)">
@@ -2591,23 +2611,23 @@ async function vSettings(){
         <div><div style="font-size:15px;font-weight:500">运行任务</div>
           <div style="font-size:11.5px;color:var(--t600)">后台子进程执行，关掉页面也会跑完。同一项目同时只跑一个。</div></div>
         <div class="row" style="gap:6px">
-          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('autopilot')">✦ 建立项目底座</button>
-          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING?'disabled':''} onclick="runPipeline('serve')">▶ 更新本期数据</button>
+          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING||D.access_role==='viewer'?'disabled':''} onclick="runPipeline('autopilot')">✦ 建立项目底座</button>
+          <button class="btn btn-primary" style="font-size:12.5px" ${RUNNING||D.access_role==='viewer'?'disabled':''} onclick="runPipeline('serve')">▶ 更新本期数据</button>
         </div>
         <label class="row" style="gap:6px;font-size:12px;color:var(--t500)">
           <input type="checkbox" id="run-skip-crawl" style="width:auto"> 跳过重新抓站（优先使用旧快照；无旧快照但有问题库时继续 AI 采样）
         </label>
         <div class="row" style="gap:6px">
-          ${acts.map(x=>`<button class="btn btn-secondary" style="font-size:11.5px;padding:4px 9px" ${RUNNING?'disabled':''}
+          ${acts.map(x=>`<button class="btn btn-secondary" style="font-size:11.5px;padding:4px 9px" ${RUNNING||D.access_role==='viewer'?'disabled':''}
             onclick="runAction('${x}')">${esc((ACTIONS[x]||{}).label||x)}</button>`).join('')}
         </div>
         <div class="row" style="gap:6px;align-items:center;padding-top:4px;box-shadow:inset 0 1px 0 var(--line)">
           <span style="font-size:12px;color:var(--t500)">周期复跑</span>
-          ${[0,7,14,30].map(dd=>`<button class="btn ${monCur===dd?'btn-secondary':'btn-ghost'}" style="font-size:11.5px;padding:3px 9px" onclick="setMonitor(${dd})">${dd?('每 '+dd+' 天'):'关'}</button>`).join('')}
+          ${[0,7,14,30].map(dd=>`<button class="btn ${monCur===dd?'btn-secondary':'btn-ghost'}" style="font-size:11.5px;padding:3px 9px" ${D.access_role==='viewer'?'disabled':''} onclick="setMonitor(${dd})">${dd?('每 '+dd+' 天'):'关'}</button>`).join('')}
           ${monCur?`<span class="muted" style="font-size:11.5px">下次 ${esc(mon.next_run||'')} · 到期后看板运行时自动更新本期数据</span>`:''}
         </div>
         <div class="row"><div id="jobstat" style="font-size:12.5px;flex:1"></div>
-          ${RUNNING?`<button class="btn btn-secondary" style="font-size:12px" onclick="stopJob()">停止任务</button>`:''}</div>
+          ${RUNNING&&D.access_role!=='viewer'?`<button class="btn btn-secondary" style="font-size:12px" onclick="stopJob()">停止任务</button>`:''}</div>
         <pre class="log" id="joblog" style="max-height:260px"></pre>
         ${RECENTJOBS.length?`<details><summary style="font-size:12px;color:var(--t500);cursor:pointer">最近任务（${RECENTJOBS.length}）</summary>
           <div style="display:flex;flex-direction:column;gap:4px;margin-top:7px">${RECENTJOBS.map(j=>`<button class="btn btn-ghost" style="font-size:11.5px;text-align:left;justify-content:flex-start" onclick="showLog(${esc(JSON.stringify(j.id))})">
@@ -2617,8 +2637,39 @@ async function vSettings(){
     <div class="row" style="margin-top:14px;font-size:12.5px;color:var(--t500)">
       发布渠道（GitHub / WordPress / 公众号 / Webhook）已独立成页 →
       <button class="btn btn-ghost" style="font-size:12.5px;color:var(--a300)" onclick="go('publishing')">打开发布渠道</button></div>
-    <p class="muted" style="font-size:12px;margin-top:16px">团队与权限：管理员可在「用户管理」中创建、停用用户或重置密码。</p>
+    ${ME&&ME.role==='admin'?`<div class="card elev" style="padding:18px;gap:9px;margin-top:20px"><div style="font-size:15px;font-weight:500">全局 API 保护</div>
+      <p class="muted" style="font-size:12px">并发与每日调用数是硬上限。金额是保守预留上限；开启前须填写每个使用引擎的单次尝试最高成本，不是账单金额。</p>
+      <div class="row" style="gap:8px"><label>并发 <input id="lim-con" class="input" type="number" min="1" value="${esc(API_LIMITS.max_concurrency||'2')}" style="width:75px"></label>
+        <label>每日调用 <input id="lim-day" class="input" type="number" min="1" value="${esc(API_LIMITS.daily_call_limit||'300')}" style="width:95px"></label>
+        <label>每日预留上限（元）<input id="lim-cny" class="input" type="number" min="0" step="0.01" value="${esc(API_LIMITS.daily_budget_cny||'')}" placeholder="留空关闭金额上限" style="width:120px"></label></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">${(KEYS||[]).filter(k=>k.env).map(k=>`<label style="font-size:11px">${esc(k.label)} 元/次尝试
+        <input class="input lim-price" data-code="${esc(k.code)}" type="number" min="0" step="0.001" value="${esc((API_LIMITS.prices||{})[k.code]||'')}" placeholder="未设置" style="width:85px"></label>`).join('')}</div>
+      <div class="row"><span class="muted" style="font-size:11px;flex:1">今日已预留 ${esc((API_LIMITS.today||{}).calls||0)} 次 / ¥${esc((API_LIMITS.today||{}).reserved_cny||0)}</span><button class="btn btn-secondary" onclick="saveApiLimits()">保存上限</button></div></div>`:''}
+    <p class="muted" style="font-size:12px;margin-top:16px">团队与权限：项目管理员管理项目成员；全局管理员管理用户与密钥。</p>
   </div>`;
+}
+async function saveProjectMember(){
+  const username=$('#pm-user').value.trim(),role=$('#pm-role').value;
+  if(!username){toast('请填写已有用户名','err');return}
+  const r=await post('/api/project-members/'+SLUG,{username,role});
+  toast(r.ok?'成员权限已保存':(r.error||'保存失败'),r.ok?'':'err');
+  if(r.ok){PROJECT_MEMBERS=null;render()}
+}
+async function removeProjectMember(username){
+  if(!confirm(`移除 ${username} 对当前项目的访问权限？`))return;
+  const r=await post('/api/project-members/'+SLUG,{username,role:null});
+  toast(r.ok?'已移除':(r.error||'移除失败'),r.ok?'':'err');
+  if(r.ok){PROJECT_MEMBERS=null;render()}
+}
+async function saveApiLimits(){
+  const updates={GEOLOOK_API_MAX_CONCURRENCY:$('#lim-con').value,
+    GEOLOOK_API_DAILY_CALL_LIMIT:$('#lim-day').value,
+    GEOLOOK_API_DAILY_BUDGET_CNY:$('#lim-cny').value};
+  document.querySelectorAll('.lim-price').forEach(el=>{
+    updates['GEOLOOK_API_MAX_ATTEMPT_COST_CNY_'+el.dataset.code.toUpperCase()]=el.value});
+  const r=await post('/api/api-limits',{updates});
+  toast(r.ok?'全局限额已保存':(r.error||'保存失败'),r.ok?'':'err');
+  if(r.ok){API_LIMITS=null;render()}
 }
 function editPub(i){
   const x=PUB.publishers[i];
@@ -2654,7 +2705,8 @@ async function savePub(i){
   }
   toast('已保存');closeModal();PUB=null;KEYS=null;render();
 }
-async function stopJob(){if(RUNNING){await post(`/api/job/${RUNNING}/stop`,{});toast('已发送停止信号')}}
+async function stopJob(){if(RUNNING){const r=await post(`/api/job/${RUNNING}/stop`,{});
+  toast(r.ok?'已发送停止信号':(r.error||'无法停止这个任务'),r.ok?'':'err')}}
 async function showLog(id){
   LASTJOB=id;
   const r=await api(`/api/job/${id}?offset=0`);const pre=$('#joblog'),st=$('#jobstat');
@@ -2663,7 +2715,8 @@ async function showLog(id){
 }
 async function setMonitor(days){
   const next=days?new Date(Date.now()+days*864e5).toISOString().slice(0,10):null;
-  const r=await post('/api/config/'+SLUG,{monitor:days?{every_days:days,next_run:next}:{}});
+  const cfg=SET_CFG||await api('/api/config/'+SLUG);
+  const r=await post('/api/config/'+SLUG,{monitor:days?{every_days:days,next_run:next}:{},_revision:cfg._revision});
   toast(r.ok?(days?`已开启：每 ${days} 天自动更新本期数据，首次 ${next}`:'已关闭周期复跑'):'失败：'+(r.error||''),r.ok?'':'err');
   if(r.ok){SET_CFG=null;render()}
 }
@@ -2684,11 +2737,12 @@ async function switchModal(){
       <button class="btn btn-secondary" onclick="closeModal();go('onboard',{obStep:1})">+ 接入新品牌</button>
       <button class="btn btn-primary" onclick="closeModal()">关闭</button></div>`);
 }
-async function switchProject(slug){KEYS=null;PROJECTS=null;SET_CFG=null;PUB=null;AS={tree:null,cur:null,text:''};
+async function switchProject(slug){KEYS=null;PROJECTS=null;SET_CFG=null;PUB=null;PROJECT_MEMBERS=null;API_LIMITS=null;AS={tree:null,cur:null,text:''};
   WB={qid:null,sources:[],cur:null,text:'',check:null,q:null};ST.engSel=null;
   await load(slug);go('overview')}
 async function editConfig(){
   const cfg=await api('/api/config/'+SLUG);const b=cfg.brand||{};
+  ST.cfgRevision=cfg._revision;
   modal(`<h4 style="font-size:17px">品牌配置</h4>
     <div class="field"><label>品牌名</label><input id="c-name" class="input" value="${esc(b.name||'')}"></div>
     <div class="field"><label>别名（顿号分隔——漏别名会低估提及率）</label><input id="c-alias" class="input" value="${esc((b.aliases||[]).join('、'))}"></div>
@@ -2701,6 +2755,7 @@ async function editConfig(){
 }
 async function saveCfg(){
   const cfg=await api('/api/config/'+SLUG);
+  cfg._revision=ST.cfgRevision;
   const sp=v=>v.split(/[、,，]/).map(s=>s.trim()).filter(Boolean);
   cfg.brand.name=$('#c-name').value.trim();
   cfg.brand.aliases=sp($('#c-alias').value);
@@ -2709,7 +2764,7 @@ async function saveCfg(){
   cfg.market=document.querySelector('input[name=cmkt]:checked').value;
   if(cfg.bootstrap)cfg.bootstrap.needs_review=false;
   const r=await post('/api/config/'+SLUG,cfg);
-  toast(r.ok?'已保存':'失败',r.ok?'':'err');if(r.ok){closeModal();load(SLUG,true)}
+  toast(r.ok?'已保存':(r.error||'失败'),r.ok?'':'err');if(r.ok){closeModal();load(SLUG,true)}
 }
 function editKey(i){
   const k=KEYS[i];
@@ -3033,7 +3088,7 @@ function vSamples(){
       ${sel('date',SMPF.date,[['','全部日期']].concat((SMP.dates||[]).map(d=>[d,d])),'日期')}
       ${sel('platform',SMPF.platform,[['','全部引擎']].concat((SMP.platforms||[]).map(p=>[p,p])),'引擎')}
       ${sel('flag',SMPF.flag,[['','全部样本'],['review','仅待复核'],['edited','仅人工改过']],'筛选')}
-      ${SMPF.date&&ME&&ME.role==='admin'&&Object.hasOwn(SMP.date_counts||{},SMPF.date)?`<button type="button" class="btn btn-ghost" style="font-size:12px;color:var(--error)" onclick="deleteSampleDate()">删除 ${esc(SMPF.date)} 全部 ${SMP.date_counts[SMPF.date]} 条</button>`:''}
+      ${SMPF.date&&D&&D.access_role==='admin'&&Object.hasOwn(SMP.date_counts||{},SMPF.date)?`<button type="button" class="btn btn-ghost" style="font-size:12px;color:var(--error)" onclick="deleteSampleDate()">删除 ${esc(SMPF.date)} 全部 ${SMP.date_counts[SMPF.date]} 条</button>`:''}
       <span class="small" style="color:var(--t600);margin-left:auto">共 ${SMP.total||0} 条
         ${review?` · <span style="color:var(--a300)">${review} 条待复核</span>`:''}
         ${edited?` · ${edited} 条已人工核对`:''}</span>

@@ -130,6 +130,7 @@ test('sample list fetch bypasses browser cache and keeps fresh success metadata'
 test('date delete button shows full-day count even when list has filters', () => {
   const box = setup(null);
   box.ME = {role: 'admin'};
+  box.D.access_role = 'admin';
   vm.runInContext("SMPF.date='2026-10-01';SMPF.platform='kimi';SMP={rows:[],total:1,dates:['2026-10-01'],date_counts:{'2026-10-01':12},platforms:['kimi']}", box);
   assert.ok(box.vSamples().includes('删除 2026-10-01 全部 12 条'));
 });

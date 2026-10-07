@@ -102,6 +102,7 @@ class TestPickLLM(unittest.TestCase):
 
 
 class TestWriteEnv(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX file mode assertion")
     def test_roundtrip_set_and_delete(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -121,6 +122,7 @@ class TestWriteEnv(unittest.TestCase):
                     self.assertEqual(os.environ.get("GLM_MODEL"), "")
                     self.assertEqual(S.model_for("glm"), S.PROVIDERS["glm"]["model"])
 
+    @unittest.skipIf(os.name == "nt", "Linux child process loads fcntl")
     def test_restart_uses_saved_values_and_clear_markers(self):
         with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ):
             path = Path(td) / ".env"
@@ -162,6 +164,10 @@ class TestEnvPrecedence(unittest.TestCase):
         expected = set(ALL_KEY_ENVS + ALL_MODEL_ENVS)
         for spec in P.PUBLISHERS.values():
             expected.update(spec["env"])
+        expected.update({"GEOLOOK_API_MAX_CONCURRENCY", "GEOLOOK_API_DAILY_CALL_LIMIT",
+                         "GEOLOOK_API_DAILY_BUDGET_CNY"})
+        expected.update(f"GEOLOOK_API_MAX_ATTEMPT_COST_CNY_{code.upper()}"
+                        for code in S.PROVIDERS)
         self.assertEqual(DB.G.UI_ENV_KEYS, expected)
 
     def test_legacy_file_export_and_deployment_settings(self):

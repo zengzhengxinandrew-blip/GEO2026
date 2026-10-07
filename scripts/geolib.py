@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import ipaddress
 import json
 import os
 import re
 import socket
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -42,6 +44,11 @@ UI_ENV_KEYS = frozenset({
     "WECHAT_APPID", "WECHAT_APPSECRET", "X_API_KEY", "X_API_SECRET",
     "X_ACCESS_TOKEN", "X_ACCESS_SECRET", "REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
     "REDDIT_USERNAME", "REDDIT_PASSWORD",
+    "GEOLOOK_API_MAX_CONCURRENCY", "GEOLOOK_API_DAILY_CALL_LIMIT",
+    "GEOLOOK_API_DAILY_BUDGET_CNY",
+    *(f"GEOLOOK_API_MAX_ATTEMPT_COST_CNY_{name}" for name in
+      ("GLM", "DOUBAO", "DEEPSEEK", "KIMI", "MINIMAX", "GEMINI",
+       "OPENAI", "CLAUDE", "GROK", "PERPLEXITY")),
 })
 
 
@@ -132,11 +139,46 @@ def project_lock(slug: str):
             fcntl.flock(fd, fcntl.LOCK_UN)
 
 
+def acquire_run_lock(slug: str):
+    """Atomically reserve one running pipeline per project, across processes."""
+    d = project_dir(slug)
+    d.mkdir(parents=True, exist_ok=True)
+    fd = (d / ".run.lock").open("a+")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fd.close()
+        return None
+    return fd
+
+
+def run_locked(slug: str) -> bool:
+    fd = acquire_run_lock(slug)
+    if fd is None:
+        return True
+    fd.close()
+    return False
+
+
+def acquire_publish_lock(slug: str, shared: bool = False):
+    """Readers see one released project version, not a half-copied release."""
+    d = project_dir(slug)
+    d.mkdir(parents=True, exist_ok=True)
+    fd = (d / ".publish.lock").open("a+")
+    fcntl.flock(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+    return fd
+
+
 def load_config(slug: str) -> dict:
     p = project_dir(slug) / "geo.json"
     if not p.exists():
         die(f"找不到项目配置 {p}，先运行：python3 scripts/geo.py init --url <网址>")
     return json.loads(p.read_text("utf-8"))
+
+
+def config_revision(slug: str) -> str:
+    p = project_dir(slug) / "geo.json"
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else ""
 
 
 def has_site(cfg: dict) -> bool:
@@ -154,19 +196,28 @@ def save_config(slug: str, cfg: dict):
     if p.exists():
         bak = p.parent / ".geo.bak"
         bak.mkdir(exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         (bak / f"geo-{stamp}.json").write_text(p.read_text("utf-8"), "utf-8")
         old = sorted(bak.glob("geo-*.json"))
         for f in old[:-10]:
             f.unlink()
-    p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
+    write_json(p, cfg)
 
 
 def write_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-    os.replace(tmp, path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}-", delete=False) as out:
+            tmp = Path(out.name)
+            json.dump(data, out, ensure_ascii=False, indent=2)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
 
 
 def read_json(path: Path, default=None):

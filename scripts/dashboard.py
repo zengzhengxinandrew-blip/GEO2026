@@ -31,9 +31,27 @@ try:
 except ModuleNotFoundError as e:
     raise SystemExit(f"缺少依赖：{e.name}。请先 pip3 install requests beautifulsoup4 lxml") from e
 import jobs as J
+import access as AC
 import tasks as T
 
 UI = Path(__file__).resolve().parent / "ui.html"
+
+PROJECT_PATHS = (
+    "/api/collect/queue/", "/api/workbench-outline/", "/api/project-members/",
+    "/api/sample-date/", "/api/publishcfg/", "/api/distribution/",
+    "/api/workbench/", "/api/factcheck/", "/api/samples/",
+    "/api/expand/", "/api/assets/", "/api/content/",
+    "/api/config/", "/api/facts/", "/api/asset/",
+    "/api/sample/", "/api/collect/", "/api/publish/",
+    "/api/files/", "/api/p/",
+)
+
+
+def _path_project(path: str) -> str | None:
+    if path.startswith("/files/"):
+        return path[len("/files/"):].split("/", 1)[0]
+    return next((path[len(prefix):] for prefix in PROJECT_PATHS
+                 if path.startswith(prefix)), None)
 
 
 # ---------------------------------------------------------------- 数据聚合
@@ -46,9 +64,10 @@ def list_projects() -> list[dict]:
         cfg_path = d / "geo.json"
         if not cfg_path.exists():
             continue
-        cfg = G.read_json(cfg_path, {})
-        audit = G.read_json(d / "audit.json", {})
-        td = G.read_json(d / "tasks.json", {})
+        with G.acquire_publish_lock(d.name, shared=True):
+            cfg = G.read_json(cfg_path, {})
+            audit = G.read_json(d / "audit.json", {})
+            td = G.read_json(d / "tasks.json", {})
         s = td.get("summary", {})
         out.append({
             "slug": d.name,
@@ -383,6 +402,7 @@ def delete_user(username: str, actor: str) -> None:
                 1 for u in users if u.get("role") == "admin" and u.get("active", True)) <= 1:
             raise ValueError("不能删除最后一个管理员")
         _save_users([u for u in users if u is not target])
+        AC.remove_user(username)
 
 
 def _new_session(user: dict) -> str:
@@ -618,6 +638,12 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "仅管理员可执行此操作"}, 403)
         return False
 
+    def _project_access(self, slug: str, role: str = "viewer") -> bool:
+        if AC.allowed(self.user, slug, role):
+            return True
+        self._json({"error": "没有这个项目的访问权限"}, 403)
+        return False
+
     def _send(self, code, body: bytes, ctype="application/json; charset=utf-8"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -645,7 +671,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "service": "geolook"})
         if not self._auth():
             return
+        read_fd = None
         try:
+            scoped = _path_project(p)
+            if scoped and not self._project_access(scoped,
+                    "admin" if p.startswith("/api/project-members/") else "viewer"):
+                return
+            if p.startswith("/api/job/"):
+                target_job = J.get(p[len("/api/job/"):])
+                if target_job and not self._project_access(target_job["slug"]):
+                    return
+            if scoped:
+                read_fd = G.acquire_publish_lock(scoped, shared=True)
             if p in ("/", "/index.html"):
                 return self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
             if p == "/api/auth/me":
@@ -655,14 +692,19 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 return self._json(users_public())
             if p == "/api/projects":
-                return self._json(list_projects())
+                return self._json([x for x in list_projects()
+                                   if AC.allowed(self.user, x["slug"])])
             if p == "/api/actions":
                 return self._json(J.ACTIONS)
             if p.startswith("/api/p/"):
-                return self._json(project(p[len("/api/p/"):]))
+                slug = p[len("/api/p/"):]
+                return self._json({**project(slug), "access_role": AC.role_for(self.user, slug)})
             if p.startswith("/api/config/"):
                 slug = p[len("/api/config/"):]
-                return self._json(G.read_json(G.project_dir(slug) / "geo.json", {}))
+                return self._json({**G.read_json(G.project_dir(slug) / "geo.json", {}),
+                                   "_revision": G.config_revision(slug)})
+            if p.startswith("/api/project-members/"):
+                return self._json(AC.members(p[len("/api/project-members/"):]))
             if p.startswith("/api/facts/"):
                 slug = p[len("/api/facts/"):]
                 f = G.project_dir(slug) / "content" / "facts.md"
@@ -729,7 +771,7 @@ class Handler(BaseHTTPRequestHandler):
                     rows.append({"code": code, "label": spec["name"], "market": spec["market"],
                                  "search": spec.get("search", False), "env": spec["key_env"],
                                  "ok": S.available(code),
-                                 "key_tail": key[-4:] if len(key) >= 8 else "",
+                                 "key_tail": key[-4:] if self.user and self.user.get("role") == "admin" and len(key) >= 8 else "",
                                  "model": os.environ.get(menv) or spec.get("model", "") if menv else spec.get("model", ""),
                                  "model_env": menv,
                                  "model_set": bool(menv and os.environ.get(menv)),
@@ -738,6 +780,19 @@ class Handler(BaseHTTPRequestHandler):
                     rows.append({"code": code, "label": label, "market": mk,
                                  "search": True, "env": None, "ok": None})
                 return self._json(rows)
+            if p == "/api/api-limits":
+                if not self._admin():
+                    return
+                import api_limits
+                import sample as S
+                return self._json({
+                    "max_concurrency": api_limits.setting("GEOLOOK_API_MAX_CONCURRENCY", "2"),
+                    "daily_call_limit": api_limits.setting("GEOLOOK_API_DAILY_CALL_LIMIT", "300"),
+                    "daily_budget_cny": api_limits.setting("GEOLOOK_API_DAILY_BUDGET_CNY"),
+                    "prices": {code: api_limits.setting(f"GEOLOOK_API_MAX_ATTEMPT_COST_CNY_{code.upper()}")
+                               for code in S.PROVIDERS},
+                    "today": G.read_json(api_limits._root() / f"{date.today().isoformat()}.json",
+                                         {"calls": 0, "reserved_cny": 0})})
             if p.startswith("/api/factcheck/"):
                 slug = p[len("/api/factcheck/"):]
                 return self._json(G.read_json(G.project_dir(slug) / "factcheck.json", []) or [])
@@ -774,7 +829,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"files": files})
             if p == "/api/jobs":
                 slug = q.get("slug", [None])[0]
-                return self._json({"jobs": J.recent(slug),
+                if slug and not self._project_access(slug):
+                    return
+                return self._json({"jobs": [j for j in J.recent(slug)
+                                             if AC.allowed(self.user, j.get("slug", ""))],
                                    "running": J.running_for(slug) if slug else None})
             if p.startswith("/api/job/"):
                 jid = p[len("/api/job/"):]
@@ -804,9 +862,11 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if p.startswith("/files/"):
                 rel = p[len("/files/"):]
+                slug = rel.split("/", 1)[0]
+                base = G.project_dir(slug).resolve()
                 target = (G.WORK / rel).resolve()
                 try:
-                    target.relative_to(G.WORK.resolve())
+                    target.relative_to(base)
                 except ValueError:
                     return self._send(403, b"forbidden", "text/plain")
                 if not target.is_file():
@@ -824,14 +884,42 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "项目不存在"}, 404)
         except Exception as e:  # noqa: BLE001
             return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
+        finally:
+            if read_fd is not None:
+                read_fd.close()
 
     # ------------------------------------------------------------ POST
     def do_POST(self):
         if not self._auth():
             return
         p = unquote(urlparse(self.path).path)
+        mutation_fd = None
         try:
             body = self._body()
+            scoped = _path_project(p)
+            if not scoped and p in ("/api/run", "/api/task", "/api/questions-add",
+                                     "/api/sample-import"):
+                scoped = body.get("slug") or ""
+            if p.startswith("/api/job/") and p.endswith("/stop"):
+                job = J.get(p[len("/api/job/"):-len("/stop")])
+                scoped = job["slug"] if job else ""
+            if scoped:
+                required = "admin" if p.startswith("/api/project-members/") or p.startswith("/api/sample-date/") else "editor"
+                if not self._project_access(scoped, required):
+                    return
+                if p.startswith("/api/job/") and p.endswith("/stop") and job \
+                        and AC.role_for(self.user, scoped) != "admin" \
+                        and job.get("started_by") != (self.user or {}).get("username"):
+                    return self._json({"ok": False, "error": "只能停止自己启动的任务"}, 403)
+                # Config editors serialize on project_lock; the running child uses a
+                # staged snapshot and publication three-way-merges later edits.
+                config_edit = (p.startswith("/api/config/") or
+                               p.startswith("/api/publishcfg/") or p == "/api/questions-add")
+                if p != "/api/run" and not p.endswith("/stop") and not config_edit:
+                    mutation_fd = G.acquire_run_lock(scoped)
+                    if mutation_fd is None:
+                        return self._json({"ok": False,
+                                           "error": "项目正在运行任务或被其他人修改，请稍后重试"}, 409)
 
             if p == "/api/users":
                 if not self._admin():
@@ -878,22 +966,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": "请填写官网地址"}, 400)
                 cfg = create_project(url, body.get("name", ""), body.get("slug", ""),
                                      body.get("market", "cn"), int(body.get("max_pages", 25)))
+                AC.set_member(cfg["slug"], (self.user or {}).get("username", ""), "admin")
                 return self._json({"ok": True, "slug": cfg["slug"]})
 
             if p == "/api/run":
-                job = J.start(body["slug"], body["action"], body.get("params") or {})
+                try:
+                    job = J.start(body["slug"], body["action"], body.get("params") or {},
+                                  started_by=(self.user or {}).get("username", ""))
+                except J.JobBusyError as e:
+                    return self._json({"ok": False, "error": str(e), "job": e.job}, 409)
                 return self._json({"ok": True, "job": job})
 
             if p.startswith("/api/sample-date/"):
-                if not self._admin():
-                    return
                 import sample as S
                 slug = p[len("/api/sample-date/"):]
                 date_value = str(body.get("date") or "")
                 if body.get("confirm_date") != date_value:
                     return self._json({"ok": False, "error": "请完整输入所选日期以确认删除"}, 400)
-                if J.running_for(slug):
-                    return self._json({"ok": False, "error": "项目任务正在运行，请结束后再删除样本"}, 409)
                 result = S.delete_sample_date(slug, date_value, body.get("expected_count"))
                 return self._json(result, 200 if result.get("ok") else 409)
 
@@ -915,13 +1004,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": "records 必须是非空数组"}, 400)
                 if len(records) > 200:
                     return self._json({"ok": False, "error": "单次最多 200 条"}, 400)
-                # 采样/导入类任务运行中会写同一份当日样本文件，先挡回避免并发写丢行
-                jid = J.running_for(slug)
-                job = J.get(jid) if jid else None
-                if job and job.get("action") in ("sample", "sample-import", "serve", "cycle", "autopilot"):
-                    return self._json({"ok": False,
-                                       "error": f"任务「{job.get('label') or job.get('action')}」正在运行，"
-                                                "会写同一份样本文件——等它结束后再上传"}, 409)
+                # The request-wide run lock already excludes every pipeline action.
                 with G.project_lock(slug):
                     res = S.collect_import(slug, records)
                 return self._json(res, 200 if res.get("ok") else 400)
@@ -932,10 +1015,26 @@ class Handler(BaseHTTPRequestHandler):
 
             if p.startswith("/api/config/"):
                 slug = p[len("/api/config/"):]
-                cur = G.read_json(G.project_dir(slug) / "geo.json", {})
-                cur.update(body)          # 整体覆盖字段，前端传完整对象
-                G.save_config(slug, cur)
-                return self._json({"ok": True})
+                expected = body.get("_revision")
+                if not expected:
+                    return self._json({"ok": False, "error": "缺少配置版本，请刷新后重试"}, 428)
+                with G.project_lock(slug):
+                    if G.config_revision(slug) != expected:
+                        return self._json({"ok": False, "error": "配置已被其他人修改，请刷新后重试"}, 409)
+                    cur = G.read_json(G.project_dir(slug) / "geo.json", {})
+                    cur.update({k: v for k, v in body.items() if k != "_revision"})
+                    G.save_config(slug, cur)
+                return self._json({"ok": True, "revision": G.config_revision(slug)})
+
+            if p.startswith("/api/project-members/"):
+                slug = p[len("/api/project-members/"):]
+                username = str(body.get("username") or "").strip()
+                if body.get("role") is not None and not any(
+                        u.get("username", "").casefold() == username.casefold()
+                        and u.get("active", True) for u in _load_users()):
+                    return self._json({"ok": False, "error": "用户不存在或已停用"}, 400)
+                AC.set_member(slug, username, body.get("role"))
+                return self._json({"ok": True, "members": AC.members(slug)})
 
             if p.startswith("/api/workbench-outline/"):
                 import generate as GEN
@@ -1001,6 +1100,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
 
             if p == "/api/keys":
+                if not self._admin():
+                    return
                 import publish as P
                 import sample as S
                 allowed = set()
@@ -1023,6 +1124,33 @@ class Handler(BaseHTTPRequestHandler):
                 write_env(clean)
                 return self._json({"ok": True})
 
+            if p == "/api/api-limits":
+                if not self._admin():
+                    return
+                import sample as S
+                allowed = {"GEOLOOK_API_MAX_CONCURRENCY", "GEOLOOK_API_DAILY_CALL_LIMIT",
+                           "GEOLOOK_API_DAILY_BUDGET_CNY"}
+                allowed.update(f"GEOLOOK_API_MAX_ATTEMPT_COST_CNY_{c.upper()}" for c in S.PROVIDERS)
+                updates = body.get("updates") or {}
+                if not isinstance(updates, dict) or not updates or set(updates) - allowed:
+                    return self._json({"ok": False, "error": "API 限额配置项无效"}, 400)
+                clean = {}
+                for key, raw in updates.items():
+                    value = str(raw).strip()
+                    if key in ("GEOLOOK_API_MAX_CONCURRENCY", "GEOLOOK_API_DAILY_CALL_LIMIT"):
+                        if not value.isdecimal() or int(value) < 1:
+                            return self._json({"ok": False, "error": f"{key} 必须是正整数"}, 400)
+                    elif value:
+                        try:
+                            number = float(value)
+                        except ValueError:
+                            return self._json({"ok": False, "error": f"{key} 必须是正数"}, 400)
+                        if not 0 < number < float("inf"):
+                            return self._json({"ok": False, "error": f"{key} 必须是正数"}, 400)
+                    clean[key] = value
+                write_env(clean)
+                return self._json({"ok": True})
+
             if p.startswith("/api/publishcfg/"):
                 import publish as P
                 slug = p[len("/api/publishcfg/"):]
@@ -1030,11 +1158,12 @@ class Handler(BaseHTTPRequestHandler):
                 if code not in P.PUBLISHERS:
                     return self._json({"ok": False, "error": f"未知渠道 {code}"}, 400)
                 keys = {k for k, _ in P.PUBLISHERS[code]["cfg"]}
-                cfg = G.read_json(G.project_dir(slug) / "geo.json", {})
-                pub = cfg.setdefault("publishing", {})
-                pub[code] = {k: str(v or "").strip() for k, v in (body.get("cfg") or {}).items()
-                             if k in keys}
-                G.save_config(slug, cfg)
+                with G.project_lock(slug):
+                    cfg = G.read_json(G.project_dir(slug) / "geo.json", {})
+                    pub = cfg.setdefault("publishing", {})
+                    pub[code] = {k: str(v or "").strip() for k, v in (body.get("cfg") or {}).items()
+                                 if k in keys}
+                    G.save_config(slug, cfg)
                 return self._json({"ok": True})
 
             if p.startswith("/api/publish/"):
@@ -1067,36 +1196,41 @@ class Handler(BaseHTTPRequestHandler):
                 items = body.get("items")
                 if not slug or not isinstance(items, list) or not items:
                     return self._json({"ok": False, "error": "缺 slug / items"}, 400)
-                cfg = G.read_json(G.project_dir(slug) / "geo.json", {})
-                qs = cfg.setdefault("questions", [])
-                existing = {q.get("text", "").strip() for q in qs}
-                series = {"cn": 1, "global": 101, "both": 901}
-                used = {int(m.group(1)) for q in qs
-                        if (m := re.match(r"q(\d+)$", str(q.get("id", ""))))}
-                added = []
-                for it in items:
-                    text = str(it.get("text") or "").strip()
-                    mk = it.get("market") if it.get("market") in series else "cn"
-                    grp = str(it.get("group") or "场景").strip() or "场景"
-                    if not text or text in existing:
-                        continue
-                    n = series[mk]
-                    while n in used:
-                        n += 1
-                    used.add(n)
-                    q = {"id": f"q{n:03d}", "group": grp, "market": mk, "text": text,
-                         "source": "expand"}
-                    qs.append(q)
-                    existing.add(text)
-                    added.append(q)
-                if added:
-                    G.save_config(slug, cfg)
+                with G.project_lock(slug):
+                    cfg = G.read_json(G.project_dir(slug) / "geo.json", {})
+                    qs = cfg.setdefault("questions", [])
+                    existing = {q.get("text", "").strip() for q in qs}
+                    series = {"cn": 1, "global": 101, "both": 901}
+                    used = {int(m.group(1)) for q in qs
+                            if (m := re.match(r"q(\d+)$", str(q.get("id", ""))))}
+                    added = []
+                    for it in items:
+                        text = str(it.get("text") or "").strip()
+                        mk = it.get("market") if it.get("market") in series else "cn"
+                        grp = str(it.get("group") or "场景").strip() or "场景"
+                        if not text or text in existing:
+                            continue
+                        n = series[mk]
+                        while n in used:
+                            n += 1
+                        used.add(n)
+                        q = {"id": f"q{n:03d}", "group": grp, "market": mk, "text": text,
+                             "source": "expand"}
+                        qs.append(q)
+                        existing.add(text)
+                        added.append(q)
+                    if added:
+                        G.save_config(slug, cfg)
                 return self._json({"ok": True, "added": len(added),
                                    "ids": [q["id"] for q in added]})
 
             if p == "/api/sample-import":
                 import sample as S
-                path = G.project_dir(body["slug"]) / "samples" / body["file"]
+                filename = str(body.get("file") or "")
+                if not filename or filename.startswith(".") or "/" in filename or "\\" in filename \
+                        or not filename.endswith(".md"):
+                    return self._json({"ok": False, "error": "采样文件名无效"}, 400)
+                path = G.project_dir(body["slug"]) / "samples" / filename
                 if body.get("text") is not None:
                     path.write_text(body["text"], "utf-8")
                 S.sample_import(body["slug"], str(path))
@@ -1109,6 +1243,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001
             return self._json({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
+        finally:
+            if mutation_fd is not None:
+                mutation_fd.close()
 
 
 def _monitor_tick():
@@ -1120,26 +1257,29 @@ def _monitor_tick():
         cfg_path = d / "geo.json"
         if not cfg_path.exists():
             continue
-        cfg = G.read_json(cfg_path, {})
-        mon = cfg.get("monitor") or {}
-        every = mon.get("every_days")
-        if not every or (mon.get("next_run") or "") > G.today():
-            continue
-        if J.running_for(d.name):
+        run_fd = G.acquire_run_lock(d.name)
+        if run_fd is None:
             continue  # 有任务在跑，下个 tick 再看
         try:
-            J.start(d.name, "serve", {})
-            mon["next_run"] = (date.today() + timedelta(days=int(every))).isoformat()
-            cfg["monitor"] = mon
-            G.save_config(d.name, cfg)
-            G.info(f"周期复跑触发：{d.name}，下次 {mon['next_run']}")
-        except (ValueError, RuntimeError) as e:
+            cfg = G.read_json(cfg_path, {})
+            mon = cfg.get("monitor") or {}
+            every = mon.get("every_days")
+            if not every or (mon.get("next_run") or "") > G.today():
+                run_fd.close()
+                continue
+            next_run = (date.today() + timedelta(days=int(every))).isoformat()
+            J.start(d.name, "serve", {}, started_by="scheduler", reserved_fd=run_fd,
+                    scheduled_next_run=next_run)
+            G.info(f"周期复跑触发：{d.name}，成功后下次 {next_run}")
+        except Exception as e:  # noqa: BLE001
+            run_fd.close()
             G.info(f"周期复跑跳过 {d.name}：{e}")
 
 
 def _monitor_loop():
     while True:
         try:
+            J.reap_orphans()
             _monitor_tick()
         except Exception as e:  # noqa: BLE001  调度线程绝不能死
             G.info(f"周期复跑检查出错：{type(e).__name__}: {e}")
@@ -1164,6 +1304,7 @@ def run(port: int = 8765, open_browser: bool = True,
     Handler.TOKEN = token
     Handler.COOKIE_SECURE = _env_bool("GEOLOOK_COOKIE_SECURE", host not in ("127.0.0.1", "localhost"))
     J.reap_orphans()  # 回收上次服务留下的 running 僵尸记录，恢复并发保护
+    J.prune_failed_stages()
     threading.Thread(target=_monitor_loop, daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}/"

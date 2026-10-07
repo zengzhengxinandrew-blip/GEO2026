@@ -118,7 +118,7 @@ class SampleIntegrity(unittest.TestCase):
     def test_http_date_delete_requires_admin_confirmation(self):
         G.write_jsonl(self.path, [record()])
         with mock.patch.object(DB.Handler, "_auth", return_value=True), \
-             mock.patch.object(DB.Handler, "_admin", return_value=True):
+             mock.patch.object(DB.Handler, "_project_access", return_value=True):
             server = DB.ThreadingHTTPServer(("127.0.0.1", 0), DB.Handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -140,7 +140,7 @@ class SampleIntegrity(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertFalse(result["ok"])
                 self.assertTrue(self.path.exists())
-                with mock.patch.object(DB.J, "running_for", return_value="busy"):
+                with mock.patch.object(DB.G, "acquire_run_lock", return_value=None):
                     status, result = send("2026-10-01")
                 self.assertEqual(status, 409)
                 self.assertIn("正在运行", result["error"])
@@ -209,7 +209,8 @@ class SampleIntegrity(unittest.TestCase):
 
     def test_http_detail_returns_saved_provider_error_as_readable_record(self):
         G.write_jsonl(self.path, [record(ok=False)])
-        with mock.patch.object(DB.Handler, "_auth", return_value=True):
+        with mock.patch.object(DB.Handler, "_auth", return_value=True), \
+             mock.patch.object(DB.Handler, "_project_access", return_value=True):
             server = DB.ThreadingHTTPServer(("127.0.0.1", 0), DB.Handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()

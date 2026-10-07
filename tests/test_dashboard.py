@@ -3,6 +3,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -10,6 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import dashboard as D
+import access as AC
 
 
 class TestAuthOk(unittest.TestCase):
@@ -112,6 +114,98 @@ class TestEnvBool(unittest.TestCase):
             self.assertFalse(D._env_bool("FLAG", True))
         with mock.patch.dict(D.os.environ, {}, clear=True):
             self.assertTrue(D._env_bool("FLAG", True))
+
+
+class TestProjectAccessHTTP(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.work = mock.patch.object(D.G, "WORK", Path(self.tmp.name) / "work")
+        self.work.start()
+        self.addCleanup(self.work.stop)
+        self.users = mock.patch.dict(D.os.environ, {
+            "GEOLOOK_USERS_FILE": str(Path(self.tmp.name) / "users.json")})
+        self.users.start()
+        self.addCleanup(self.users.stop)
+        D._SESSIONS.clear()
+        D.create_user("root", "long-password", "admin")
+        D.create_user("alice", "long-password", "user")
+        D.create_user("bob", "long-password", "user")
+        for slug in ("alpha", "beta"):
+            D.G.write_json(D.G.project_dir(slug) / "geo.json",
+                           {"slug": slug, "brand": {"name": slug}, "questions": []})
+        AC.set_member("alpha", "alice", "editor")
+        AC.set_member("beta", "bob", "viewer")
+        D.Handler.TOKEN = None
+        self.server = D.ThreadingHTTPServer(("127.0.0.1", 0), D.Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.thread.join)
+        self.addCleanup(self.server.shutdown)
+
+    def request(self, username, path, body=None):
+        sid = D._new_session({"username": username, "role": "admin" if username == "root" else "user",
+                              "active": True})
+        raw = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(f"http://127.0.0.1:{self.server.server_port}{path}",
+                                     data=raw, headers={"Cookie": f"{D.SESSION_COOKIE}={sid}",
+                                                        "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            with error:
+                return error.code, json.loads(error.read())
+
+    def test_membership_filters_projects_and_global_key_changes(self):
+        status, projects = self.request("alice", "/api/projects")
+        self.assertEqual(status, 200)
+        self.assertEqual([p["slug"] for p in projects], ["alpha"])
+        self.assertEqual(self.request("alice", "/api/config/beta")[0], 403)
+        self.assertEqual(self.request("bob", "/api/config/alpha")[0], 403)
+        self.assertEqual(self.request("alice", "/api/keys", {"updates": {"ARK_API_KEY": "x"}})[0], 403)
+        self.assertEqual(self.request("alice", "/api/project-members/alpha")[0], 403)
+        self.assertEqual(self.request("bob", "/api/config/beta", {"notes": "changed"})[0], 403)
+        self.assertEqual(self.request("root", "/api/projects")[0], 200)
+
+    def test_config_version_rejects_stale_edit(self):
+        _, cfg = self.request("alice", "/api/config/alpha")
+        self.assertEqual(self.request("alice", "/api/config/alpha",
+                                      {"notes": "first", "_revision": cfg["_revision"]})[0], 200)
+        status, result = self.request("alice", "/api/config/alpha",
+                                      {"notes": "stale", "_revision": cfg["_revision"]})
+        self.assertEqual(status, 409)
+        self.assertIn("其他人修改", result["error"])
+        self.assertEqual(D.G.load_config("alpha")["notes"], "first")
+
+    def test_config_edit_is_allowed_during_staged_job(self):
+        _, cfg = self.request("alice", "/api/config/alpha")
+        with mock.patch.object(D.G, "acquire_run_lock", return_value=None):
+            status, _ = self.request("alice", "/api/config/alpha",
+                                     {"notes": "next cycle", "_revision": cfg["_revision"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(D.G.load_config("alpha")["notes"], "next cycle")
+
+    def test_file_route_cannot_escape_authorized_project(self):
+        sid = D._new_session({"username": "alice", "role": "user", "active": True})
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_port}/files/alpha/%2e%2e/beta/geo.json",
+            headers={"Cookie": f"{D.SESSION_COOKIE}={sid}"})
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            urllib.request.urlopen(req, timeout=3)
+        self.assertEqual(denied.exception.code, 403)
+
+    def test_second_run_returns_existing_job_and_viewer_cannot_start(self):
+        active = {"id": "abcdef123456", "slug": "alpha", "label": "更新本期数据",
+                  "started_by": "root", "status": "running"}
+        with mock.patch.object(D.J, "start", side_effect=D.J.JobBusyError(active)):
+            status, result = self.request("alice", "/api/run",
+                                          {"slug": "alpha", "action": "serve"})
+        self.assertEqual(status, 409)
+        self.assertEqual(result["job"]["id"], active["id"])
+        self.assertEqual(self.request("bob", "/api/run",
+                                      {"slug": "beta", "action": "serve"})[0], 403)
 
 
 if __name__ == "__main__":

@@ -324,6 +324,17 @@ def ask_anthropic(p: dict, key: str, question: str, timeout: int) -> dict:
 
 
 def ask(platform: str, question: str, timeout: int = 120) -> dict:
+    import api_limits
+    if not available(platform):
+        return _ask_unlimited(platform, question, timeout)
+    try:
+        with api_limits.reserve(platform):
+            return _ask_unlimited(platform, question, timeout)
+    except api_limits.LimitReached as e:
+        return {"ok": False, "answer": "", "error": str(e)}
+
+
+def _ask_unlimited(platform: str, question: str, timeout: int = 120) -> dict:
     p = PROVIDERS[platform]
     key = (os.environ.get(p["key_env"]) or "").strip()
     if not key:

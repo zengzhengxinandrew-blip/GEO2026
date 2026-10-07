@@ -77,7 +77,7 @@ Most GEO products are **monitoring SaaS**: they show mention rates and rankings,
 | **Cost** | Subscription | Free and open source; you only pay your own engine API sampling costs (can be zero — manual sampling works) |
 | **Deliverables** | Dashboard screenshots | Client-ready diagnosis report / strategy / execution plan / ticket CSV — built for agencies and consultants |
 
-Honest limits: the self-hosted account system provides admin-managed access but not per-project permissions; sampling frequency and volume depend on your own API budget; "suspected negative" flags are leads for human review, not verdicts. These are deliberate design choices.
+Honest limits: project roles are enforced by the dashboard, but this is still a single-instance, file-backed product rather than a hardened multi-tenant SaaS. API spending reservations are conservative estimates, not provider billing guarantees; "suspected negative" flags are leads for human review, not verdicts.
 
 ## 4. Deployment
 
@@ -115,12 +115,13 @@ The server binds to `127.0.0.1` by default. Two ways to access it remotely:
 # Option A (recommended): SSH tunnel, no port exposed
 ssh -N -L 8765:127.0.0.1:8765 user@your-server   # then open http://127.0.0.1:8765 locally
 
-# Option B: public bind + access token (both required — refuses to start without a token)
+# Option B: public bind + startup token (both required — refuses to start without a token)
 export GEOLOOK_TOKEN=$(openssl rand -hex 16)
+export GEOLOOK_ADMIN_PASSWORD='choose-a-separate-strong-password'
 export GEOLOOK_HOST=0.0.0.0
 python3 scripts/geo.py ui
-# Enter the token on first visit (or open http://server:8765/?token=TOKEN);
-# afterwards access is via HttpOnly cookie. API calls: X-Geolook-Token header.
+# Sign in with the admin account and password; the browser receives an HttpOnly session cookie.
+# API scripts can use X-Geolook-Token. Avoid putting the token in a URL.
 ```
 
 For public deployments put an HTTPS reverse proxy (nginx/caddy) in front — a token over plain HTTP can be intercepted. `.env` and `work/` contain secrets and project data — mind file permissions.
@@ -165,6 +166,13 @@ python3 scripts/geo.py new --url https://example.com --market both
 5. **Execute** — Take tickets P0-first in **Action Plan** (click a title for why/how/acceptance); write in the **Workbench** (pre-check ≥ B, publish as final, then work through the distribution checklist); deploy **Assets** (llms.txt to site root, JSON-LD into `<head>`, snippets into templates — see DEPLOY.md).
 6. **Verify** — Settings → "Auto-verify" re-crawls and judges tickets; after the next sampling round, check per-question before/after in **Verification**.
 7. **Operate** — enable scheduled re-runs (7/14/30 days); generate monthly reports and client packages in **Reports & Delivery**.
+
+### Team access and concurrent runs
+
+- A global admin creates accounts and manages shared API keys and global sampling limits. A project admin assigns existing accounts as project admin, editor, or viewer under **Settings → Project members**. Viewers cannot edit or launch jobs. Existing projects are visible only to global admins until access is assigned.
+- One project can run only one pipeline at a time, across dashboard and CLI processes; a second request reports the active job. Different projects can run at once. Each job records its initiating user and configuration revision.
+- A job works on a private project snapshot. Its output is exposed in the dashboard only after successful completion; a failed job leaves the last published result in place. Project configuration edits made while it runs are applied to the next cycle. On publication, non-conflicting generated configuration changes are merged and human edits take precedence on conflicts. Failed staging copies are retained for seven days for diagnosis, then removed on dashboard startup.
+- Global API concurrency defaults to 2, and the daily logical-answer limit defaults to 300. The optional CNY ceiling requires an admin-provided maximum cost per attempt for each engine used; the software reserves up to three attempts per answer. This is not a token-accurate invoice or a guaranteed provider-side charge cap. Also set spending alerts or hard quotas in the provider console.
 
 ### Products and brands without a website
 
@@ -229,7 +237,7 @@ All six audit dimensions are anchored in public empirical data; `scripts/audit.p
 
 ## Design principles & security boundaries
 
-- **Self-hosted accounts**: username/password login with admin-created users; user data and project data remain plain local files
+- **Self-hosted accounts**: username/password login with admin-created users and per-project roles; user data and project data remain plain local files
 - **Never fabricate**: facts only from site copy; inventing competitor names is forbidden; AI drafts must pass lint + human review
 - **Verification is the product**: anything auto-verifiable never relies on someone saying "done"
 - **Publishing is always manual**: channel credentials in local `.env` (mode 600); every publish is an explicit click; WeChat/WordPress go to drafts only
