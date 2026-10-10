@@ -1620,8 +1620,15 @@ async function editQuestions(){
   ST.qRevision=cfg._revision;
   const rows=(cfg.questions||[]).map(q=>`${q.id}|${q.group}|${q.market}|${q.scope||'auto'}|${q.text}`).join('\n');
   modal(`<h4 style="font-size:17px">编辑问题库</h4>
-    <p class="muted" style="font-size:12px">每行一题：<code>编号|分组|市场(cn/global/both)|用途(visibility/content/auto)|问题</code>。visibility=选型题，content=内容题，auto=自动判定。旧四列格式仍可用；改用途会重算已有答案，改题需重采样。</p>
+    <p class="muted" style="font-size:12px">新增问题可直接写在新的一行，按下方市场保存为选型题。已有问题也可使用 <code>编号|分组|市场(cn/global/both)|用途(visibility/content/auto)|问题</code> 编辑。旧四列格式仍可用；改用途会重算已有答案，改题需重采样。</p>
     <textarea id="qedit" class="input" rows="18">${esc(rows)}</textarea>
+    <label class="row" style="gap:8px;margin-top:10px;font-size:12px">纯文本新题市场
+      <select id="qnew-market" class="input" style="width:auto">
+        <option value="cn" ${cfg.market==='global'?'':'selected'}>国内</option>
+        <option value="global" ${cfg.market==='global'?'selected':''}>海外</option>
+        <option value="both">国内与海外</option>
+      </select>
+    </label>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button class="btn btn-secondary" onclick="closeModal()">取消</button>
       <button class="btn btn-primary" onclick="saveQuestions()">保存</button></div>`);
@@ -1630,12 +1637,31 @@ async function saveQuestions(){
   const cfg=await api('/api/config/'+SLUG);
   cfg._revision=ST.qRevision;
   const qs=[];
-  for(const line of $('#qedit').value.split('\n')){
-    const m=line.split('|');if(m.length<4||!m[3].trim())continue;
+  const used=new Set((cfg.questions||[]).map(q=>q.id));
+  const texts=new Set();
+  const newMarket=$('#qnew-market').value;
+  for(const [index,raw] of $('#qedit').value.split('\n').entries()){
+    const line=raw.trim();if(!line)continue;
+    if(!line.includes('|')){
+      if(texts.has(line)){toast(`第 ${index+1} 行：问题重复`,'err');return}
+      let n=({cn:1,global:101,both:901})[newMarket]||1;
+      while(used.has('q'+String(n).padStart(3,'0')))n++;
+      const id='q'+String(n).padStart(3,'0');used.add(id);texts.add(line);
+      qs.push({id,group:'推荐',market:newMarket,text:line,scope:'visibility',source:'manual'});
+      continue;
+    }
+    const m=line.split('|');
+    if(m.length<4||!m[0].trim()||!m[3].trim()){
+      toast(`第 ${index+1} 行格式有误，请填写完整问题`,'err');return;
+    }
     const hasScope=m.length>=5&&['visibility','content','auto','probe'].includes(m[3].trim());
     const scope=hasScope?m[3].trim():'auto',text=m.slice(hasScope?4:3).join('|').trim();
-    if(!text)continue;
-    qs.push({id:m[0].trim(),group:m[1].trim()||'推荐',market:['cn','global','both'].indexOf(m[2].trim())>=0?m[2].trim():'cn',text,...(scope==='auto'?{}:{scope})});
+    if(!text||qs.some(q=>q.id===m[0].trim())){
+      toast(`第 ${index+1} 行：问题为空或编号重复`,'err');return;
+    }
+    texts.add(text);
+    const old=(cfg.questions||[]).find(q=>q.id===m[0].trim());
+    qs.push({id:m[0].trim(),group:m[1].trim()||'推荐',market:['cn','global','both'].indexOf(m[2].trim())>=0?m[2].trim():'cn',text,...(scope==='auto'?{}:{scope}),...(old?.source?{source:old.source}:{})});
   }
   cfg.questions=qs; if(cfg.bootstrap)cfg.bootstrap.needs_review=false;
   const r=await post('/api/config/'+SLUG,cfg);
